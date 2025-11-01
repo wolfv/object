@@ -33,7 +33,10 @@ pub mod elf;
 #[cfg(feature = "macho")]
 mod macho;
 #[cfg(feature = "macho")]
-pub use macho::MachOBuildVersion;
+pub use macho::{
+    MachOBuildVersion, MachODylib, MachOEntryPoint, MachOLoadDylinker, MachORpath,
+    MachOSourceVersion, MachOUuid, MachOVersionMin,
+};
 
 #[cfg(feature = "pe")]
 pub mod pe;
@@ -92,6 +95,42 @@ pub struct Object<'a> {
     macho_cpu_subtype: Option<u32>,
     #[cfg(feature = "macho")]
     macho_build_version: Option<MachOBuildVersion>,
+    /// Mach-O file type (MH_OBJECT, MH_EXECUTE, MH_DYLIB, etc.). Defaults to MH_OBJECT if not set.
+    #[cfg(feature = "macho")]
+    macho_file_type: Option<u32>,
+    /// Mach-O LC_LOAD_DYLINKER command for specifying the dynamic linker.
+    #[cfg(feature = "macho")]
+    macho_load_dylinker: Option<MachOLoadDylinker>,
+    /// Mach-O LC_MAIN command for specifying the entry point.
+    #[cfg(feature = "macho")]
+    macho_entry_point: Option<MachOEntryPoint>,
+    /// Mach-O LC_RPATH commands for runtime search paths.
+    #[cfg(feature = "macho")]
+    macho_rpaths: Vec<MachORpath>,
+    /// Mach-O LC_ID_DYLIB command for identifying this dylib.
+    #[cfg(feature = "macho")]
+    macho_id_dylib: Option<MachODylib>,
+    /// Mach-O LC_LOAD_DYLIB commands for library dependencies.
+    #[cfg(feature = "macho")]
+    macho_load_dylibs: Vec<MachODylib>,
+    /// Mach-O LC_UUID command for unique identifier.
+    #[cfg(feature = "macho")]
+    macho_uuid: Option<MachOUuid>,
+    /// Mach-O LC_SOURCE_VERSION command for source version.
+    #[cfg(feature = "macho")]
+    macho_source_version: Option<MachOSourceVersion>,
+    /// Mach-O LC_VERSION_MIN_MACOSX command for minimum macOS version.
+    #[cfg(feature = "macho")]
+    macho_version_min_macosx: Option<MachOVersionMin>,
+    /// Mach-O LC_VERSION_MIN_IPHONEOS command for minimum iOS version.
+    #[cfg(feature = "macho")]
+    macho_version_min_iphoneos: Option<MachOVersionMin>,
+    /// Mach-O LC_VERSION_MIN_TVOS command for minimum tvOS version.
+    #[cfg(feature = "macho")]
+    macho_version_min_tvos: Option<MachOVersionMin>,
+    /// Mach-O LC_VERSION_MIN_WATCHOS command for minimum watchOS version.
+    #[cfg(feature = "macho")]
+    macho_version_min_watchos: Option<MachOVersionMin>,
     /// Mach-O MH_SUBSECTIONS_VIA_SYMBOLS flag. Only ever set if format is Mach-O.
     #[cfg(feature = "macho")]
     macho_subsections_via_symbols: bool,
@@ -120,6 +159,30 @@ impl<'a> Object<'a> {
             macho_cpu_subtype: None,
             #[cfg(feature = "macho")]
             macho_build_version: None,
+            #[cfg(feature = "macho")]
+            macho_file_type: None,
+            #[cfg(feature = "macho")]
+            macho_load_dylinker: None,
+            #[cfg(feature = "macho")]
+            macho_entry_point: None,
+            #[cfg(feature = "macho")]
+            macho_rpaths: Vec::new(),
+            #[cfg(feature = "macho")]
+            macho_id_dylib: None,
+            #[cfg(feature = "macho")]
+            macho_load_dylibs: Vec::new(),
+            #[cfg(feature = "macho")]
+            macho_uuid: None,
+            #[cfg(feature = "macho")]
+            macho_source_version: None,
+            #[cfg(feature = "macho")]
+            macho_version_min_macosx: None,
+            #[cfg(feature = "macho")]
+            macho_version_min_iphoneos: None,
+            #[cfg(feature = "macho")]
+            macho_version_min_tvos: None,
+            #[cfg(feature = "macho")]
+            macho_version_min_watchos: None,
             #[cfg(feature = "macho")]
             macho_subsections_via_symbols: false,
         }

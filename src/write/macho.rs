@@ -45,6 +45,264 @@ impl MachOBuildVersion {
     }
 }
 
+/// The customizable portion of a [`macho::DylinkerCommand`] for LC_LOAD_DYLINKER.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MachOLoadDylinker {
+    /// Path to the dynamic linker (typically "/usr/lib/dyld" on macOS).
+    pub dylinker: Vec<u8>,
+}
+
+impl MachOLoadDylinker {
+    /// Create a new dylinker command with the standard macOS dylinker path.
+    pub fn default_dyld() -> Self {
+        Self {
+            dylinker: b"/usr/lib/dyld".to_vec(),
+        }
+    }
+
+    fn cmdsize(&self) -> u32 {
+        // DylinkerCommand struct size + null-terminated string, rounded up to 8-byte alignment
+        let base_size = mem::size_of::<macho::DylinkerCommand<Endianness>>();
+        let string_size = self.dylinker.len() + 1; // +1 for null terminator
+        let total = base_size + string_size;
+        // Round up to 8-byte boundary
+        let aligned = (total + 7) & !7;
+        debug_assert!(aligned <= u32::MAX as usize);
+        aligned as u32
+    }
+}
+
+/// The customizable portion of a [`macho::EntryPointCommand`] for LC_MAIN.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct MachOEntryPoint {
+    /// File offset of the entry point (typically offset of main() function).
+    pub entryoff: u64,
+    /// Initial stack size (0 if not specified).
+    pub stacksize: u64,
+}
+
+impl MachOEntryPoint {
+    /// Create a new entry point command with the given offset and default stack size.
+    pub fn new(entryoff: u64) -> Self {
+        Self {
+            entryoff,
+            stacksize: 0,
+        }
+    }
+
+    /// Create a new entry point command with the given offset and stack size.
+    pub fn with_stacksize(entryoff: u64, stacksize: u64) -> Self {
+        Self {
+            entryoff,
+            stacksize,
+        }
+    }
+
+    fn cmdsize(&self) -> u32 {
+        let sz = mem::size_of::<macho::EntryPointCommand<Endianness>>();
+        debug_assert!(sz <= u32::MAX as usize);
+        sz as u32
+    }
+}
+
+/// The customizable portion of a [`macho::RpathCommand`] for LC_RPATH.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MachORpath {
+    /// Runtime search path (e.g., "@executable_path/../Frameworks").
+    pub path: Vec<u8>,
+}
+
+impl MachORpath {
+    /// Create a new rpath command with the given path.
+    pub fn new(path: Vec<u8>) -> Self {
+        Self { path }
+    }
+
+    /// Create a new rpath command from a string slice.
+    pub fn from_str(path: &str) -> Self {
+        Self {
+            path: path.as_bytes().to_vec(),
+        }
+    }
+
+    fn cmdsize(&self) -> u32 {
+        // RpathCommand struct size + null-terminated string, rounded up to 8-byte alignment
+        let base_size = mem::size_of::<macho::RpathCommand<Endianness>>();
+        let string_size = self.path.len() + 1; // +1 for null terminator
+        let total = base_size + string_size;
+        // Round up to 8-byte boundary
+        let aligned = (total + 7) & !7;
+        debug_assert!(aligned <= u32::MAX as usize);
+        aligned as u32
+    }
+}
+
+/// The customizable portion of a [`macho::DylibCommand`] for LC_ID_DYLIB or LC_LOAD_DYLIB.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct MachODylib {
+    /// Library path/name (e.g., "/usr/lib/libSystem.B.dylib" or "@rpath/MyFramework.framework/MyFramework").
+    pub name: Vec<u8>,
+    /// Library's build timestamp (typically 0 for modern dylibs).
+    pub timestamp: u32,
+    /// Current version number (encoded as X.Y.Z in nibbles).
+    pub current_version: u32,
+    /// Compatibility version number (encoded as X.Y.Z in nibbles).
+    pub compatibility_version: u32,
+}
+
+impl MachODylib {
+    /// Create a new dylib command with the given name and default version info.
+    pub fn new(name: Vec<u8>) -> Self {
+        Self {
+            name,
+            timestamp: 0,
+            current_version: 0x10000, // 1.0.0
+            compatibility_version: 0x10000, // 1.0.0
+        }
+    }
+
+    /// Create a new dylib command from a string slice.
+    pub fn from_str(name: &str) -> Self {
+        Self::new(name.as_bytes().to_vec())
+    }
+
+    /// Create with specific version information.
+    pub fn with_versions(name: Vec<u8>, current_version: u32, compatibility_version: u32) -> Self {
+        Self {
+            name,
+            timestamp: 0,
+            current_version,
+            compatibility_version,
+        }
+    }
+
+    /// Encode a version from major.minor.patch format.
+    /// Version format: major is in the high 16 bits, minor in middle 8 bits, patch in low 8 bits.
+    pub fn encode_version(major: u16, minor: u8, patch: u8) -> u32 {
+        ((major as u32) << 16) | ((minor as u32) << 8) | (patch as u32)
+    }
+
+    fn cmdsize(&self) -> u32 {
+        // DylibCommand struct size + null-terminated string, rounded up to 8-byte alignment
+        let base_size = mem::size_of::<macho::DylibCommand<Endianness>>();
+        let string_size = self.name.len() + 1; // +1 for null terminator
+        let total = base_size + string_size;
+        // Round up to 8-byte boundary
+        let aligned = (total + 7) & !7;
+        debug_assert!(aligned <= u32::MAX as usize);
+        aligned as u32
+    }
+}
+
+/// The customizable portion of a [`macho::UuidCommand`] for LC_UUID.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct MachOUuid {
+    /// 128-bit UUID (16 bytes).
+    pub uuid: [u8; 16],
+}
+
+impl MachOUuid {
+    /// Create a new UUID command with the given UUID bytes.
+    pub fn new(uuid: [u8; 16]) -> Self {
+        Self { uuid }
+    }
+
+    /// Generate a new random UUID (requires std for randomness).
+    #[cfg(feature = "std")]
+    pub fn random() -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Simple UUID v4 generation using time-based randomness
+        // This is not cryptographically secure but sufficient for build IDs
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let nanos = now.as_nanos();
+
+        let mut uuid = [0u8; 16];
+        uuid[0..8].copy_from_slice(&nanos.to_le_bytes()[0..8]);
+        uuid[8..16].copy_from_slice(&nanos.to_be_bytes()[0..8]);
+
+        // Set version to 4 (random)
+        uuid[6] = (uuid[6] & 0x0F) | 0x40;
+        // Set variant to RFC 4122
+        uuid[8] = (uuid[8] & 0x3F) | 0x80;
+
+        Self { uuid }
+    }
+
+    fn cmdsize(&self) -> u32 {
+        let sz = mem::size_of::<macho::UuidCommand<Endianness>>();
+        debug_assert!(sz <= u32::MAX as usize);
+        sz as u32
+    }
+}
+
+/// The customizable portion of a [`macho::SourceVersionCommand`] for LC_SOURCE_VERSION.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct MachOSourceVersion {
+    /// Source version encoded as A.B.C.D.E packed into 64 bits.
+    /// A is 24 bits, B through E are 10 bits each.
+    pub version: u64,
+}
+
+impl MachOSourceVersion {
+    /// Create a new source version command with the given version.
+    pub fn new(version: u64) -> Self {
+        Self { version }
+    }
+
+    /// Encode a version from A.B.C.D.E format.
+    /// A can be up to 16777215 (24 bits), B-E can each be up to 1023 (10 bits).
+    pub fn encode_version(a: u32, b: u16, c: u16, d: u16, e: u16) -> u64 {
+        ((a as u64 & 0xFFFFFF) << 40)
+            | ((b as u64 & 0x3FF) << 30)
+            | ((c as u64 & 0x3FF) << 20)
+            | ((d as u64 & 0x3FF) << 10)
+            | (e as u64 & 0x3FF)
+    }
+
+    fn cmdsize(&self) -> u32 {
+        let sz = mem::size_of::<macho::SourceVersionCommand<Endianness>>();
+        debug_assert!(sz <= u32::MAX as usize);
+        sz as u32
+    }
+}
+
+/// The customizable portion of a [`macho::VersionMinCommand`] for LC_VERSION_MIN_MACOSX, etc.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct MachOVersionMin {
+    /// Minimum OS version, where X.Y.Z is encoded in nibbles as xxxx.yy.zz.
+    pub version: u32,
+    /// SDK version as X.Y.Z, encoded in nibbles as xxxx.yy.zz.
+    pub sdk: u32,
+}
+
+impl MachOVersionMin {
+    /// Create a new version min command with the given version and SDK.
+    pub fn new(version: u32, sdk: u32) -> Self {
+        Self { version, sdk }
+    }
+
+    /// Encode a version from X.Y.Z format.
+    pub fn encode_version(major: u16, minor: u8, patch: u8) -> u32 {
+        ((major as u32) << 16) | ((minor as u32) << 8) | (patch as u32)
+    }
+
+    fn cmdsize(&self) -> u32 {
+        let sz = mem::size_of::<macho::VersionMinCommand<Endianness>>();
+        debug_assert!(sz <= u32::MAX as usize);
+        sz as u32
+    }
+}
+
 // Public methods.
 impl<'a> Object<'a> {
     /// Specify the Mach-O CPU subtype.
@@ -61,6 +319,186 @@ impl<'a> Object<'a> {
     #[inline]
     pub fn set_macho_build_version(&mut self, info: MachOBuildVersion) {
         self.macho_build_version = Some(info);
+    }
+
+    /// Specify the Mach-O file type.
+    ///
+    /// This can be used to create executables (`MH_EXECUTE`), dynamic libraries (`MH_DYLIB`),
+    /// bundles (`MH_BUNDLE`), etc. If not set, defaults to `MH_OBJECT`.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_file_type(&mut self, file_type: u32) {
+        self.macho_file_type = Some(file_type);
+    }
+
+    /// Specify the dynamic linker path for a Mach-O `LC_LOAD_DYLINKER` command.
+    ///
+    /// This is typically required for executables and specifies the path to the dynamic linker
+    /// (usually "/usr/lib/dyld" on macOS).
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_load_dylinker(&mut self, dylinker: MachOLoadDylinker) {
+        self.macho_load_dylinker = Some(dylinker);
+    }
+
+    /// Specify the entry point for a Mach-O `LC_MAIN` command.
+    ///
+    /// This is required for executables and specifies the file offset of the main() function.
+    /// This is the modern replacement for LC_UNIXTHREAD.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_entry_point(&mut self, entry_point: MachOEntryPoint) {
+        self.macho_entry_point = Some(entry_point);
+    }
+
+    /// Add a runtime search path for a Mach-O `LC_RPATH` command.
+    ///
+    /// Multiple rpaths can be added by calling this method multiple times.
+    /// Common paths include "@executable_path/../Frameworks", "@loader_path", etc.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn add_macho_rpath(&mut self, rpath: MachORpath) {
+        self.macho_rpaths.push(rpath);
+    }
+
+    /// Get the current list of Mach-O rpaths.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_rpaths(&self) -> &[MachORpath] {
+        &self.macho_rpaths
+    }
+
+    /// Get a mutable reference to the list of Mach-O rpaths.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_rpaths_mut(&mut self) -> &mut Vec<MachORpath> {
+        &mut self.macho_rpaths
+    }
+
+    /// Set the dylib identification for a Mach-O `LC_ID_DYLIB` command.
+    ///
+    /// This should only be set for MH_DYLIB file types to identify the library's install name.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_id_dylib(&mut self, dylib: MachODylib) {
+        self.macho_id_dylib = Some(dylib);
+    }
+
+    /// Get the current dylib identification.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_id_dylib(&self) -> Option<&MachODylib> {
+        self.macho_id_dylib.as_ref()
+    }
+
+    /// Add a library dependency for a Mach-O `LC_LOAD_DYLIB` command.
+    ///
+    /// Multiple dependencies can be added by calling this method multiple times.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn add_macho_load_dylib(&mut self, dylib: MachODylib) {
+        self.macho_load_dylibs.push(dylib);
+    }
+
+    /// Get the current list of library dependencies.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_load_dylibs(&self) -> &[MachODylib] {
+        &self.macho_load_dylibs
+    }
+
+    /// Get a mutable reference to the list of library dependencies.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_load_dylibs_mut(&mut self) -> &mut Vec<MachODylib> {
+        &mut self.macho_load_dylibs
+    }
+
+    /// Set a UUID for a Mach-O `LC_UUID` command.
+    ///
+    /// The UUID is a 128-bit unique identifier for the binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_uuid(&mut self, uuid: MachOUuid) {
+        self.macho_uuid = Some(uuid);
+    }
+
+    /// Get the current UUID.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_uuid(&self) -> Option<&MachOUuid> {
+        self.macho_uuid.as_ref()
+    }
+
+    /// Set the source version for a Mach-O `LC_SOURCE_VERSION` command.
+    ///
+    /// The source version identifies the version of the source code used to build the binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_source_version(&mut self, version: MachOSourceVersion) {
+        self.macho_source_version = Some(version);
+    }
+
+    /// Get the current source version.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn macho_source_version(&self) -> Option<&MachOSourceVersion> {
+        self.macho_source_version.as_ref()
+    }
+
+    /// Set the minimum macOS version for a Mach-O `LC_VERSION_MIN_MACOSX` command.
+    ///
+    /// Specifies the minimum version of macOS required to run this binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_version_min_macosx(&mut self, version: MachOVersionMin) {
+        self.macho_version_min_macosx = Some(version);
+    }
+
+    /// Set the minimum iOS version for a Mach-O `LC_VERSION_MIN_IPHONEOS` command.
+    ///
+    /// Specifies the minimum version of iOS required to run this binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_version_min_iphoneos(&mut self, version: MachOVersionMin) {
+        self.macho_version_min_iphoneos = Some(version);
+    }
+
+    /// Set the minimum tvOS version for a Mach-O `LC_VERSION_MIN_TVOS` command.
+    ///
+    /// Specifies the minimum version of tvOS required to run this binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_version_min_tvos(&mut self, version: MachOVersionMin) {
+        self.macho_version_min_tvos = Some(version);
+    }
+
+    /// Set the minimum watchOS version for a Mach-O `LC_VERSION_MIN_WATCHOS` command.
+    ///
+    /// Specifies the minimum version of watchOS required to run this binary.
+    ///
+    /// Requires `feature = "macho"`.
+    #[inline]
+    pub fn set_macho_version_min_watchos(&mut self, version: MachOVersionMin) {
+        self.macho_version_min_watchos = Some(version);
     }
 }
 
@@ -427,6 +865,82 @@ impl<'a> Object<'a> {
             ncmds += 1;
         }
 
+        // Calculate size of load dylinker command.
+        let load_dylinker_offset = offset;
+        if let Some(dylinker) = &self.macho_load_dylinker {
+            offset += dylinker.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of entry point command.
+        let entry_point_offset = offset;
+        if let Some(entry_point) = &self.macho_entry_point {
+            offset += entry_point.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of rpath commands.
+        let mut rpath_offsets = Vec::with_capacity(self.macho_rpaths.len());
+        for rpath in &self.macho_rpaths {
+            rpath_offsets.push(offset);
+            offset += rpath.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of id_dylib command.
+        let id_dylib_offset = offset;
+        if let Some(id_dylib) = &self.macho_id_dylib {
+            offset += id_dylib.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of load_dylib commands.
+        let mut load_dylib_offsets = Vec::with_capacity(self.macho_load_dylibs.len());
+        for dylib in &self.macho_load_dylibs {
+            load_dylib_offsets.push(offset);
+            offset += dylib.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of UUID command.
+        let uuid_offset = offset;
+        if let Some(uuid) = &self.macho_uuid {
+            offset += uuid.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of source version command.
+        let source_version_offset = offset;
+        if let Some(source_version) = &self.macho_source_version {
+            offset += source_version.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        // Calculate size of version min commands.
+        let version_min_macosx_offset = offset;
+        if let Some(version_min) = &self.macho_version_min_macosx {
+            offset += version_min.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        let version_min_iphoneos_offset = offset;
+        if let Some(version_min) = &self.macho_version_min_iphoneos {
+            offset += version_min.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        let version_min_tvos_offset = offset;
+        if let Some(version_min) = &self.macho_version_min_tvos {
+            offset += version_min.cmdsize() as usize;
+            ncmds += 1;
+        }
+
+        let version_min_watchos_offset = offset;
+        if let Some(version_min) = &self.macho_version_min_watchos {
+            offset += version_min.cmdsize() as usize;
+            ncmds += 1;
+        }
+
         // Calculate size of symtab command.
         let symtab_command_offset = offset;
         let symtab_command_len = mem::size_of::<macho::SymtabCommand<Endianness>>();
@@ -592,7 +1106,7 @@ impl<'a> Object<'a> {
             MachHeader {
                 cputype,
                 cpusubtype,
-                filetype: macho::MH_OBJECT,
+                filetype: self.macho_file_type.unwrap_or(macho::MH_OBJECT),
                 ncmds,
                 sizeofcmds: sizeofcmds as u32,
                 flags,
@@ -672,6 +1186,172 @@ impl<'a> Object<'a> {
                 minos: U32::new(endian, version.minos),
                 sdk: U32::new(endian, version.sdk),
                 ntools: U32::new(endian, 0),
+            });
+        }
+
+        // Write load dylinker command.
+        if let Some(dylinker) = &self.macho_load_dylinker {
+            debug_assert_eq!(load_dylinker_offset, buffer.len());
+            let base_size = mem::size_of::<macho::DylinkerCommand<Endianness>>();
+            buffer.write(&macho::DylinkerCommand {
+                cmd: U32::new(endian, macho::LC_LOAD_DYLINKER),
+                cmdsize: U32::new(endian, dylinker.cmdsize()),
+                name: macho::LcStr {
+                    offset: U32::new(endian, base_size as u32),
+                },
+            });
+            // Write the dylinker path string (null-terminated)
+            buffer.write_bytes(&dylinker.dylinker);
+            buffer.write_bytes(&[0]); // null terminator
+            // Pad to 8-byte alignment
+            let written = base_size + dylinker.dylinker.len() + 1;
+            let aligned = (written + 7) & !7;
+            let padding = aligned - written;
+            buffer.write_bytes(&vec![0; padding]);
+        }
+
+        // Write entry point command.
+        if let Some(entry_point) = &self.macho_entry_point {
+            debug_assert_eq!(entry_point_offset, buffer.len());
+            buffer.write(&macho::EntryPointCommand {
+                cmd: U32::new(endian, macho::LC_MAIN),
+                cmdsize: U32::new(endian, entry_point.cmdsize()),
+                entryoff: U64::new(endian, entry_point.entryoff),
+                stacksize: U64::new(endian, entry_point.stacksize),
+            });
+        }
+
+        // Write rpath commands.
+        for (i, rpath) in self.macho_rpaths.iter().enumerate() {
+            debug_assert_eq!(rpath_offsets[i], buffer.len());
+            let base_size = mem::size_of::<macho::RpathCommand<Endianness>>();
+            buffer.write(&macho::RpathCommand {
+                cmd: U32::new(endian, macho::LC_RPATH),
+                cmdsize: U32::new(endian, rpath.cmdsize()),
+                path: macho::LcStr {
+                    offset: U32::new(endian, base_size as u32),
+                },
+            });
+            // Write the rpath string (null-terminated)
+            buffer.write_bytes(&rpath.path);
+            buffer.write_bytes(&[0]); // null terminator
+            // Pad to 8-byte alignment
+            let written = base_size + rpath.path.len() + 1;
+            let aligned = (written + 7) & !7;
+            let padding = aligned - written;
+            buffer.write_bytes(&vec![0; padding]);
+        }
+
+        // Write id_dylib command.
+        if let Some(id_dylib) = &self.macho_id_dylib {
+            debug_assert_eq!(id_dylib_offset, buffer.len());
+            let base_size = mem::size_of::<macho::DylibCommand<Endianness>>();
+            buffer.write(&macho::DylibCommand {
+                cmd: U32::new(endian, macho::LC_ID_DYLIB),
+                cmdsize: U32::new(endian, id_dylib.cmdsize()),
+                dylib: macho::Dylib {
+                    name: macho::LcStr {
+                        offset: U32::new(endian, base_size as u32),
+                    },
+                    timestamp: U32::new(endian, id_dylib.timestamp),
+                    current_version: U32::new(endian, id_dylib.current_version),
+                    compatibility_version: U32::new(endian, id_dylib.compatibility_version),
+                },
+            });
+            // Write the dylib name string (null-terminated)
+            buffer.write_bytes(&id_dylib.name);
+            buffer.write_bytes(&[0]); // null terminator
+            // Pad to 8-byte alignment
+            let written = base_size + id_dylib.name.len() + 1;
+            let aligned = (written + 7) & !7;
+            let padding = aligned - written;
+            buffer.write_bytes(&vec![0; padding]);
+        }
+
+        // Write load_dylib commands.
+        for (i, dylib) in self.macho_load_dylibs.iter().enumerate() {
+            debug_assert_eq!(load_dylib_offsets[i], buffer.len());
+            let base_size = mem::size_of::<macho::DylibCommand<Endianness>>();
+            buffer.write(&macho::DylibCommand {
+                cmd: U32::new(endian, macho::LC_LOAD_DYLIB),
+                cmdsize: U32::new(endian, dylib.cmdsize()),
+                dylib: macho::Dylib {
+                    name: macho::LcStr {
+                        offset: U32::new(endian, base_size as u32),
+                    },
+                    timestamp: U32::new(endian, dylib.timestamp),
+                    current_version: U32::new(endian, dylib.current_version),
+                    compatibility_version: U32::new(endian, dylib.compatibility_version),
+                },
+            });
+            // Write the dylib name string (null-terminated)
+            buffer.write_bytes(&dylib.name);
+            buffer.write_bytes(&[0]); // null terminator
+            // Pad to 8-byte alignment
+            let written = base_size + dylib.name.len() + 1;
+            let aligned = (written + 7) & !7;
+            let padding = aligned - written;
+            buffer.write_bytes(&vec![0; padding]);
+        }
+
+        // Write UUID command.
+        if let Some(uuid) = &self.macho_uuid {
+            debug_assert_eq!(uuid_offset, buffer.len());
+            buffer.write(&macho::UuidCommand {
+                cmd: U32::new(endian, macho::LC_UUID),
+                cmdsize: U32::new(endian, uuid.cmdsize()),
+                uuid: uuid.uuid,
+            });
+        }
+
+        // Write source version command.
+        if let Some(source_version) = &self.macho_source_version {
+            debug_assert_eq!(source_version_offset, buffer.len());
+            buffer.write(&macho::SourceVersionCommand {
+                cmd: U32::new(endian, macho::LC_SOURCE_VERSION),
+                cmdsize: U32::new(endian, source_version.cmdsize()),
+                version: U64::new(endian, source_version.version),
+            });
+        }
+
+        // Write version min commands.
+        if let Some(version_min) = &self.macho_version_min_macosx {
+            debug_assert_eq!(version_min_macosx_offset, buffer.len());
+            buffer.write(&macho::VersionMinCommand {
+                cmd: U32::new(endian, macho::LC_VERSION_MIN_MACOSX),
+                cmdsize: U32::new(endian, version_min.cmdsize()),
+                version: U32::new(endian, version_min.version),
+                sdk: U32::new(endian, version_min.sdk),
+            });
+        }
+
+        if let Some(version_min) = &self.macho_version_min_iphoneos {
+            debug_assert_eq!(version_min_iphoneos_offset, buffer.len());
+            buffer.write(&macho::VersionMinCommand {
+                cmd: U32::new(endian, macho::LC_VERSION_MIN_IPHONEOS),
+                cmdsize: U32::new(endian, version_min.cmdsize()),
+                version: U32::new(endian, version_min.version),
+                sdk: U32::new(endian, version_min.sdk),
+            });
+        }
+
+        if let Some(version_min) = &self.macho_version_min_tvos {
+            debug_assert_eq!(version_min_tvos_offset, buffer.len());
+            buffer.write(&macho::VersionMinCommand {
+                cmd: U32::new(endian, macho::LC_VERSION_MIN_TVOS),
+                cmdsize: U32::new(endian, version_min.cmdsize()),
+                version: U32::new(endian, version_min.version),
+                sdk: U32::new(endian, version_min.sdk),
+            });
+        }
+
+        if let Some(version_min) = &self.macho_version_min_watchos {
+            debug_assert_eq!(version_min_watchos_offset, buffer.len());
+            buffer.write(&macho::VersionMinCommand {
+                cmd: U32::new(endian, macho::LC_VERSION_MIN_WATCHOS),
+                cmdsize: U32::new(endian, version_min.cmdsize()),
+                version: U32::new(endian, version_min.version),
+                sdk: U32::new(endian, version_min.sdk),
             });
         }
 

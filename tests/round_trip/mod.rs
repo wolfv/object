@@ -13,6 +13,13 @@ mod comdat;
 mod common;
 mod elf;
 mod macho;
+#[cfg(feature = "build")]
+mod macho_builder;
+#[cfg(all(feature = "build", target_os = "macos"))]
+mod macho_builder_compat;
+mod macho_extended_lcs;
+#[cfg(feature = "build")]
+mod macho_real_world;
 mod section_flags;
 mod tls;
 
