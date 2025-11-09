@@ -326,3 +326,70 @@ fn real_world_remove_added_rpaths() {
         "Should not have temp2"
     );
 }
+
+/// Test that unknown load commands are preserved during round-trips
+#[test]
+fn real_world_preserve_unknown_commands() {
+    let path = testfile_path("base-x86_64");
+    if !path.exists() {
+        eprintln!("Skipping test: {} not found", path.display());
+        return;
+    }
+
+    let data = fs::read(&path).expect("Failed to read test file");
+
+    // First parse to count load commands
+    let header = macho::MachHeader64::parse(&*data, 0).expect("Should parse as valid Mach-O");
+    let endian: Endianness = header.endian().unwrap();
+    let original_ncmds = header.ncmds(endian);
+
+    // Count specific command types in original
+    let mut commands = header.load_commands(endian, &*data, 0).unwrap();
+    let mut original_cmd_types = Vec::new();
+    while let Some(cmd) = commands.next().unwrap() {
+        original_cmd_types.push(cmd.cmd());
+    }
+
+    // Round-trip through Builder
+    let builder = Builder::read(&*data).expect("Failed to parse Mach-O file");
+    let modified_data = builder.write().expect("Failed to write Mach-O file");
+
+    // Parse the modified file
+    let modified_header =
+        macho::MachHeader64::parse(&*modified_data, 0).expect("Should parse modified");
+    let modified_ncmds = modified_header.ncmds(endian);
+
+    // Count command types in modified
+    let mut modified_commands = modified_header
+        .load_commands(endian, &*modified_data, 0)
+        .unwrap();
+    let mut modified_cmd_types = Vec::new();
+    while let Some(cmd) = modified_commands.next().unwrap() {
+        modified_cmd_types.push(cmd.cmd());
+    }
+
+    // The number of load commands should be preserved (or close - we might add some)
+    // But we should not lose any commands
+    assert!(
+        modified_ncmds >= original_ncmds,
+        "Should preserve or add load commands, not lose them. Original: {}, Modified: {}",
+        original_ncmds,
+        modified_ncmds
+    );
+
+    // Check that important commands are preserved (LC_FUNCTION_STARTS, LC_DATA_IN_CODE, etc.)
+    for cmd_type in &original_cmd_types {
+        if *cmd_type == macho::LC_FUNCTION_STARTS
+            || *cmd_type == macho::LC_DATA_IN_CODE
+            || *cmd_type == macho::LC_DYLD_INFO
+            || *cmd_type == macho::LC_DYLD_INFO_ONLY
+            || *cmd_type == macho::LC_CODE_SIGNATURE
+        {
+            assert!(
+                modified_cmd_types.contains(cmd_type),
+                "Should preserve load command type 0x{:x}",
+                cmd_type
+            );
+        }
+    }
+}

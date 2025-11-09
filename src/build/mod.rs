@@ -19,3 +19,6 @@ pub mod elf;
 
 #[cfg(feature = "macho")]
 pub mod macho;
+
+#[cfg(feature = "macho")]
+pub mod macho_fat;

@@ -500,6 +500,19 @@ impl<'a> Object<'a> {
     pub fn set_macho_version_min_watchos(&mut self, version: MachOVersionMin) {
         self.macho_version_min_watchos = Some(version);
     }
+
+    /// Add a raw/unknown Mach-O load command.
+    ///
+    /// This allows preserving load commands that are not explicitly supported by the API.
+    /// The `data` parameter should contain the complete load command including the header
+    /// (cmd and cmdsize fields).
+    ///
+    /// # Arguments
+    /// * `cmd` - The load command type (e.g., LC_VERSION_MIN_MACOSX, LC_DYLD_INFO, etc.)
+    /// * `data` - The raw bytes of the complete load command including header
+    pub fn add_macho_unknown_command(&mut self, cmd: u32, data: Vec<u8>) {
+        self.macho_unknown_commands.push((cmd, data));
+    }
 }
 
 // Private methods.
@@ -941,6 +954,14 @@ impl<'a> Object<'a> {
             ncmds += 1;
         }
 
+        // Calculate size of unknown/raw load commands.
+        let mut unknown_command_offsets = Vec::with_capacity(self.macho_unknown_commands.len());
+        for (_cmd, data) in &self.macho_unknown_commands {
+            unknown_command_offsets.push(offset);
+            offset += data.len();
+            ncmds += 1;
+        }
+
         // Calculate size of symtab command.
         let symtab_command_offset = offset;
         let symtab_command_len = mem::size_of::<macho::SymtabCommand<Endianness>>();
@@ -1353,6 +1374,12 @@ impl<'a> Object<'a> {
                 version: U32::new(endian, version_min.version),
                 sdk: U32::new(endian, version_min.sdk),
             });
+        }
+
+        // Write unknown/raw load commands.
+        for (i, (_cmd, data)) in self.macho_unknown_commands.iter().enumerate() {
+            debug_assert_eq!(unknown_command_offsets[i], buffer.len());
+            buffer.write_bytes(data);
         }
 
         // Write symtab command.

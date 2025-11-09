@@ -131,6 +131,10 @@ pub struct Object<'a> {
     /// Mach-O LC_VERSION_MIN_WATCHOS command for minimum watchOS version.
     #[cfg(feature = "macho")]
     macho_version_min_watchos: Option<MachOVersionMin>,
+    /// Mach-O unknown/raw load commands to preserve during round-trips.
+    /// Each tuple contains (cmd_type, raw_data_including_header).
+    #[cfg(feature = "macho")]
+    macho_unknown_commands: Vec<(u32, Vec<u8>)>,
     /// Mach-O MH_SUBSECTIONS_VIA_SYMBOLS flag. Only ever set if format is Mach-O.
     #[cfg(feature = "macho")]
     macho_subsections_via_symbols: bool,
@@ -183,6 +187,8 @@ impl<'a> Object<'a> {
             macho_version_min_tvos: None,
             #[cfg(feature = "macho")]
             macho_version_min_watchos: None,
+            #[cfg(feature = "macho")]
+            macho_unknown_commands: Vec::new(),
             #[cfg(feature = "macho")]
             macho_subsections_via_symbols: false,
         }
