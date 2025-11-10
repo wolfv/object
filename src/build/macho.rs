@@ -36,6 +36,9 @@ pub struct Builder<'data> {
     pub segments: Segments<'data>,
     /// The original binary data (for preserving segments and code).
     original_data: Option<&'data [u8]>,
+    /// The minimum file offset where actual segment data begins.
+    /// This is used to calculate available slack space for growing load commands.
+    pub first_segment_data_offset: u64,
     marker: PhantomData<()>,
 }
 
@@ -50,6 +53,7 @@ impl<'data> Builder<'data> {
             load_commands: LoadCommands::new(),
             segments: Segments::new(),
             original_data: None,
+            first_segment_data_offset: 0,
             marker: PhantomData,
         }
     }
@@ -116,6 +120,7 @@ impl<'data> Builder<'data> {
             load_commands: LoadCommands::new(),
             segments: Segments::new(),
             original_data: Some(data_bytes),
+            first_segment_data_offset: 0,
             marker: PhantomData,
         };
 
@@ -221,14 +226,31 @@ impl<'data> Builder<'data> {
         let name = segment.name();
         let sections = segment.sections(endian, section_data)?;
 
+        let fileoff = segment.fileoff.get(endian) as u64;
+        let filesize = segment.filesize.get(endian) as u64;
+
+        // Track the first offset where actual section data begins
+        // We need to look at sections, not just segments, because the __TEXT segment
+        // includes the header and load commands at its start
+        for section in sections {
+            let section_offset = section.offset.get(endian) as u64;
+            let section_size = section.size.get(endian) as u64;
+
+            if section_size > 0 && section_offset > 0 {
+                if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
+                    self.first_segment_data_offset = section_offset;
+                }
+            }
+        }
+
         self.segments.push(Segment {
             id,
             delete: false,
             name: name.to_vec(),
             vmaddr: segment.vmaddr.get(endian) as u64,
             vmsize: segment.vmsize.get(endian) as u64,
-            fileoff: segment.fileoff.get(endian) as u64,
-            filesize: segment.filesize.get(endian) as u64,
+            fileoff,
+            filesize,
             maxprot: segment.maxprot.get(endian),
             initprot: segment.initprot.get(endian),
             flags: segment.flags.get(endian),
@@ -263,14 +285,31 @@ impl<'data> Builder<'data> {
         let name = segment.name();
         let sections = segment.sections(endian, section_data)?;
 
+        let fileoff = segment.fileoff.get(endian);
+        let filesize = segment.filesize.get(endian);
+
+        // Track the first offset where actual section data begins
+        // We need to look at sections, not just segments, because the __TEXT segment
+        // includes the header and load commands at its start
+        for section in sections {
+            let section_offset = section.offset.get(endian) as u64;
+            let section_size = section.size.get(endian);
+
+            if section_size > 0 && section_offset > 0 {
+                if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
+                    self.first_segment_data_offset = section_offset;
+                }
+            }
+        }
+
         self.segments.push(Segment {
             id,
             delete: false,
             name: name.to_vec(),
             vmaddr: segment.vmaddr.get(endian),
             vmsize: segment.vmsize.get(endian),
-            fileoff: segment.fileoff.get(endian),
-            filesize: segment.filesize.get(endian),
+            fileoff,
+            filesize,
             maxprot: segment.maxprot.get(endian),
             initprot: segment.initprot.get(endian),
             flags: segment.flags.get(endian),
@@ -314,10 +353,12 @@ impl<'data> Builder<'data> {
     /// This approach preserves all segment data and only modifies load commands.
     /// It works similar to how install_name_tool works.
     ///
-    /// This handles Phase 3 cases where new load commands fit in the original space:
+    /// Handles three cases:
     /// - Case 1: New commands are same size → Direct replacement
     /// - Case 2: New commands are smaller → Replace and pad with zeros
-    /// - Case 3: New commands are larger → Error (Phase 4 will handle relocation)
+    /// - Case 3: New commands are larger → Grow into slack space before segments
+    ///
+    /// If new commands exceed available slack space, returns an error.
     fn write_in_place(self, original: &[u8]) -> Result<Vec<u8>> {
         // Calculate the header size
         let header_size = if self.is_64 {
@@ -346,11 +387,24 @@ impl<'data> Builder<'data> {
         let (new_load_commands, new_ncmds) = self.build_load_commands();
         let new_sizeofcmds = new_load_commands.len() as u32;
 
-        // Check if new load commands fit in the original space
-        if new_sizeofcmds > old_sizeofcmds {
-            return Err(Error::new(
-                "New load commands are larger than original - segment relocation not yet implemented (Phase 4)"
-            ));
+        // Check if new load commands fit
+        // Case 1: Fit in original space (simple)
+        if new_sizeofcmds <= old_sizeofcmds {
+            // Simple case - commands fit in original space
+        } else {
+            // Case 2: Need to use slack space before first segment
+            let new_lc_end = header_size as u64 + new_sizeofcmds as u64;
+
+            if new_lc_end > self.first_segment_data_offset {
+                return Err(Error::new(format!(
+                    "New load commands ({} bytes) exceed available space before first segment (max {} bytes). \
+                     Full segment relocation not yet implemented.",
+                    new_sizeofcmds,
+                    self.first_segment_data_offset.saturating_sub(header_size as u64)
+                )));
+            }
+
+            // Good! We can grow into the slack space
         }
 
         // Start with a copy of the original data
@@ -361,20 +415,26 @@ impl<'data> Builder<'data> {
         let lc_end = lc_start + new_sizeofcmds as usize;
         let old_lc_end = lc_start + old_sizeofcmds as usize;
 
-        // Safety check
-        if old_lc_end > output.len() {
-            return Err(Error::new("Original load commands extend beyond file"));
+        // Safety check for the maximum we might write
+        if lc_end > output.len() {
+            return Err(Error::new("New load commands extend beyond file"));
         }
 
         // Copy new load commands
         output[lc_start..lc_end].copy_from_slice(&new_load_commands);
 
-        // If new commands are smaller, zero out the rest
+        // Handle different size cases
         if new_sizeofcmds < old_sizeofcmds {
+            // Case: Commands shrank - zero out the gap
             for i in lc_end..old_lc_end {
                 output[i] = 0;
             }
+        } else if new_sizeofcmds > old_sizeofcmds {
+            // Case: Commands grew into slack space
+            // The new commands have already overwritten the slack space
+            // No additional work needed - slack space is now part of load commands
         }
+        // else: exact same size, no action needed
 
         // Update the header with new command count and size
         // ncmds at offset 16
