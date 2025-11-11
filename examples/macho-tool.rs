@@ -242,7 +242,10 @@ fn main() {
 }
 
 fn handle_fat_binary(mut fat_builder: FatBuilder, opts: Options) -> ! {
-    println!("Detected universal binary with {} architectures", fat_builder.len());
+    println!(
+        "Detected universal binary with {} architectures",
+        fat_builder.len()
+    );
 
     // Apply modifications to all slices
     let mut modified = false;
@@ -264,16 +267,21 @@ fn handle_fat_binary(mut fat_builder: FatBuilder, opts: Options) -> ! {
     }
 
     for (old, new) in &opts.change_rpaths {
-        println!("Changing rpath in all architectures from '{}' to '{}'", old, new);
+        println!(
+            "Changing rpath in all architectures from '{}' to '{}'",
+            old, new
+        );
         fat_builder.for_each_slice(|builder| {
-            builder.remove_rpath(old);
-            builder.add_rpath(new);
+            builder.change_rpath(old, new);
         });
         modified = true;
     }
 
     for (old, new) in &opts.change_dylibs {
-        println!("Changing dependency in all architectures from '{}' to '{}'", old, new);
+        println!(
+            "Changing dependency in all architectures from '{}' to '{}'",
+            old, new
+        );
         fat_builder.for_each_slice(|builder| {
             builder.change_dependency(old, new);
         });
@@ -283,7 +291,23 @@ fn handle_fat_binary(mut fat_builder: FatBuilder, opts: Options) -> ! {
     if let Some(new_id) = &opts.new_id {
         println!("Changing dylib ID in all architectures to: {}", new_id);
         fat_builder.for_each_slice(|builder| {
-            builder.set_install_name(new_id, 0x10000, 0x10000);
+            // Preserve existing version numbers and timestamp if there's an existing ID
+            let (current_version, compatibility_version, timestamp) = builder
+                .id_dylib()
+                .map(|dylib| {
+                    (
+                        dylib.current_version,
+                        dylib.compatibility_version,
+                        dylib.timestamp,
+                    )
+                })
+                .unwrap_or((0x10000, 0x10000, 2)); // Default to 1.0.0 if no existing ID
+            builder.set_install_name_with_timestamp(
+                new_id,
+                current_version,
+                compatibility_version,
+                timestamp,
+            );
         });
         modified = true;
     }
@@ -347,7 +371,6 @@ fn handle_fat_binary(mut fat_builder: FatBuilder, opts: Options) -> ! {
 }
 
 fn handle_single_arch(mut builder: Builder, opts: Options) -> ! {
-
     // Apply modifications
     let mut modified = false;
 
@@ -368,8 +391,7 @@ fn handle_single_arch(mut builder: Builder, opts: Options) -> ! {
     // Change rpaths
     for (old, new) in &opts.change_rpaths {
         println!("Changing rpath from '{}' to '{}'", old, new);
-        builder.remove_rpath(old);
-        builder.add_rpath(new);
+        builder.change_rpath(old, new);
         modified = true;
     }
 
@@ -383,7 +405,23 @@ fn handle_single_arch(mut builder: Builder, opts: Options) -> ! {
     // Change dylib ID
     if let Some(new_id) = &opts.new_id {
         println!("Changing dylib ID to: {}", new_id);
-        builder.set_install_name(new_id, 0x10000, 0x10000);
+        // Preserve existing version numbers and timestamp if there's an existing ID
+        let (current_version, compatibility_version, timestamp) = builder
+            .id_dylib()
+            .map(|dylib| {
+                (
+                    dylib.current_version,
+                    dylib.compatibility_version,
+                    dylib.timestamp,
+                )
+            })
+            .unwrap_or((0x10000, 0x10000, 2)); // Default to 1.0.0 if no existing ID
+        builder.set_install_name_with_timestamp(
+            new_id,
+            current_version,
+            compatibility_version,
+            timestamp,
+        );
         modified = true;
     }
 

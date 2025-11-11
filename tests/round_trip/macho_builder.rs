@@ -236,7 +236,9 @@ fn builder_complex_modifications() {
     object.set_macho_file_type(macho::MH_DYLIB);
     object.set_macho_id_dylib(MachODylib::from_str("@rpath/Original.dylib"));
     object.add_macho_rpath(MachORpath::from_str("@loader_path"));
-    object.add_macho_load_dylib(MachODylib::from_str("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"));
+    object.add_macho_load_dylib(MachODylib::from_str(
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+    ));
 
     let text = object.section_id(write::StandardSection::Text);
     object.append_section_data(text, &[0; 16], 1);
@@ -276,7 +278,8 @@ fn builder_complex_modifications() {
 
     let deps: Vec<_> = builder2.dependencies().collect();
     assert_eq!(deps.len(), 3);
-    assert!(deps.contains(&b"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation".as_ref()));
+    assert!(deps
+        .contains(&b"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation".as_ref()));
     assert!(deps.contains(&b"@rpath/Dependency1.dylib".as_ref()));
     assert!(deps.contains(&b"@rpath/Dependency2.dylib".as_ref()));
 }

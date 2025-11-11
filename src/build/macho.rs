@@ -103,8 +103,11 @@ impl<'data> Builder<'data> {
         };
 
         // Store the original data as bytes
-        let file_len = data.len().map_err(|_| Error::new("Failed to get file length"))?;
-        let data_bytes = data.read_bytes_at(0, file_len)
+        let file_len = data
+            .len()
+            .map_err(|_| Error::new("Failed to get file length"))?;
+        let data_bytes = data
+            .read_bytes_at(0, file_len)
             .map_err(|_| Error::new("Failed to read binary data"))?;
 
         let mut builder = Builder {
@@ -148,39 +151,54 @@ impl<'data> Builder<'data> {
                     let name = command.string(endian, dylib_cmd.dylib.name)?;
                     let original_cmdsize = command.cmdsize();
                     let original_cmd = command.cmd();
-                    builder.load_commands.commands.push(LoadCommand::LoadDylib(LoadDylib {
-                        dylib: MachODylib {
-                            name: name.to_vec(),
-                            timestamp: dylib_cmd.dylib.timestamp.get(endian),
-                            current_version: dylib_cmd.dylib.current_version.get(endian),
-                            compatibility_version: dylib_cmd.dylib.compatibility_version.get(endian),
-                        },
-                        original_cmdsize,
-                        original_cmd,
-                    }));
+                    builder
+                        .load_commands
+                        .commands
+                        .push(LoadCommand::LoadDylib(LoadDylib {
+                            dylib: MachODylib {
+                                name: name.to_vec(),
+                                timestamp: dylib_cmd.dylib.timestamp.get(endian),
+                                current_version: dylib_cmd.dylib.current_version.get(endian),
+                                compatibility_version: dylib_cmd
+                                    .dylib
+                                    .compatibility_version
+                                    .get(endian),
+                            },
+                            original_cmdsize,
+                            original_cmd,
+                        }));
                 }
                 LoadCommandVariant::IdDylib(dylib_cmd) => {
                     let name = command.string(endian, dylib_cmd.dylib.name)?;
                     let original_cmdsize = command.cmdsize();
-                    builder.load_commands.commands.push(LoadCommand::IdDylib(IdDylib {
-                        dylib: MachODylib {
-                            name: name.to_vec(),
-                            timestamp: dylib_cmd.dylib.timestamp.get(endian),
-                            current_version: dylib_cmd.dylib.current_version.get(endian),
-                            compatibility_version: dylib_cmd.dylib.compatibility_version.get(endian),
-                        },
-                        original_cmdsize,
-                    }));
+                    builder
+                        .load_commands
+                        .commands
+                        .push(LoadCommand::IdDylib(IdDylib {
+                            dylib: MachODylib {
+                                name: name.to_vec(),
+                                timestamp: dylib_cmd.dylib.timestamp.get(endian),
+                                current_version: dylib_cmd.dylib.current_version.get(endian),
+                                compatibility_version: dylib_cmd
+                                    .dylib
+                                    .compatibility_version
+                                    .get(endian),
+                            },
+                            original_cmdsize,
+                        }));
                 }
                 LoadCommandVariant::Rpath(rpath_cmd) => {
                     let path = command.string(endian, rpath_cmd.path)?;
                     let original_cmdsize = command.cmdsize();
-                    builder.load_commands.commands.push(LoadCommand::Rpath(Rpath {
-                        rpath: MachORpath {
-                            path: path.to_vec(),
-                        },
-                        original_cmdsize,
-                    }));
+                    builder
+                        .load_commands
+                        .commands
+                        .push(LoadCommand::Rpath(Rpath {
+                            rpath: MachORpath {
+                                path: path.to_vec(),
+                            },
+                            original_cmdsize,
+                        }));
                 }
                 // All other commands: store as raw to preserve exact order and structure
                 LoadCommandVariant::Symtab(_)
@@ -246,7 +264,9 @@ impl<'data> Builder<'data> {
             let section_size = section.size.get(endian) as u64;
 
             if section_size > 0 && section_offset > 0 {
-                if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
+                if self.first_segment_data_offset == 0
+                    || section_offset < self.first_segment_data_offset
+                {
                     self.first_segment_data_offset = section_offset;
                 }
                 has_sections_with_data = true;
@@ -315,7 +335,9 @@ impl<'data> Builder<'data> {
             let section_size = section.size.get(endian);
 
             if section_size > 0 && section_offset > 0 {
-                if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
+                if self.first_segment_data_offset == 0
+                    || section_offset < self.first_segment_data_offset
+                {
                     self.first_segment_data_offset = section_offset;
                 }
                 has_sections_with_data = true;
@@ -373,7 +395,9 @@ impl<'data> Builder<'data> {
 
         // For now, we only support in-place modification (Phase 3)
         // Creating new binaries from scratch will be added in a future phase
-        Err(Error::new("Creating new binaries from scratch is not yet supported. Use Builder::read() first."))
+        Err(Error::new(
+            "Creating new binaries from scratch is not yet supported. Use Builder::read() first.",
+        ))
     }
 
     /// Write by modifying the original binary in-place.
@@ -403,12 +427,12 @@ impl<'data> Builder<'data> {
         // Extract old sizeofcmds from header
         // Field is at offset 20 for both 32-bit and 64-bit headers
         let old_sizeofcmds = match self.endian {
-            Endianness::Little => u32::from_le_bytes([
-                original[20], original[21], original[22], original[23]
-            ]),
-            Endianness::Big => u32::from_be_bytes([
-                original[20], original[21], original[22], original[23]
-            ]),
+            Endianness::Little => {
+                u32::from_le_bytes([original[20], original[21], original[22], original[23]])
+            }
+            Endianness::Big => {
+                u32::from_be_bytes([original[20], original[21], original[22], original[23]])
+            }
         };
 
         // Build new load commands using LoadCommandWriter
@@ -424,7 +448,9 @@ impl<'data> Builder<'data> {
             let new_lc_end = header_size as u64 + new_sizeofcmds as u64;
 
             if new_lc_end > self.first_segment_data_offset {
-                let available_space = self.first_segment_data_offset.saturating_sub(header_size as u64);
+                let available_space = self
+                    .first_segment_data_offset
+                    .saturating_sub(header_size as u64);
                 return Err(Error::new(format!(
                     "Changing install names or rpaths can't be redone because larger updated load commands \
                      do not fit (need {} bytes, have {} bytes available). \
@@ -570,7 +596,12 @@ impl<'data> Builder<'data> {
     }
 
     /// Set the install name for a dylib.
-    pub fn set_install_name(&mut self, name: &str, current_version: u32, compatibility_version: u32) {
+    pub fn set_install_name(
+        &mut self,
+        name: &str,
+        current_version: u32,
+        compatibility_version: u32,
+    ) {
         self.load_commands.set_id_dylib(MachODylib {
             name: name.as_bytes().to_vec(),
             timestamp: 2, // Standard timestamp value
@@ -580,7 +611,13 @@ impl<'data> Builder<'data> {
     }
 
     /// Set the install name for a dylib with explicit timestamp.
-    pub fn set_install_name_with_timestamp(&mut self, name: &str, current_version: u32, compatibility_version: u32, timestamp: u32) {
+    pub fn set_install_name_with_timestamp(
+        &mut self,
+        name: &str,
+        current_version: u32,
+        compatibility_version: u32,
+        timestamp: u32,
+    ) {
         self.load_commands.set_id_dylib(MachODylib {
             name: name.as_bytes().to_vec(),
             timestamp,
@@ -613,7 +650,8 @@ impl<'data> Builder<'data> {
 
     /// Add a library dependency.
     pub fn add_dependency(&mut self, name: &str) {
-        self.load_commands.add_load_dylib(MachODylib::from_str(name));
+        self.load_commands
+            .add_load_dylib(MachODylib::from_str(name));
     }
 
     /// Remove all library dependencies that match the given name.
@@ -680,7 +718,7 @@ pub enum LoadCommand<'data> {
         /// The load command type.
         cmd: u32,
         /// The raw command data including the load command header.
-        data: &'data [u8]
+        data: &'data [u8],
     },
 }
 
@@ -714,37 +752,50 @@ impl<'data> LoadCommands<'data> {
     /// Add a LOAD_DYLIB command.
     pub fn add_load_dylib(&mut self, dylib: MachODylib) {
         let original_cmdsize = lc_writer::calc_dylib_size(&dylib.name);
-        self.commands.push(LoadCommand::LoadDylib(LoadDylib { dylib, original_cmdsize, original_cmd: macho::LC_LOAD_DYLIB }));
+        self.commands.push(LoadCommand::LoadDylib(LoadDylib {
+            dylib,
+            original_cmdsize,
+            original_cmd: macho::LC_LOAD_DYLIB,
+        }));
     }
 
     /// Set the ID_DYLIB command (replaces existing if present).
     pub fn set_id_dylib(&mut self, dylib: MachODylib) {
         // Find the position of the existing ID_DYLIB (if any)
-        let position = self.commands.iter().position(|cmd| matches!(cmd, LoadCommand::IdDylib(_)));
+        let position = self
+            .commands
+            .iter()
+            .position(|cmd| matches!(cmd, LoadCommand::IdDylib(_)));
 
         // Remove any existing ID_DYLIB
-        self.commands.retain(|cmd| !matches!(cmd, LoadCommand::IdDylib(_)));
+        self.commands
+            .retain(|cmd| !matches!(cmd, LoadCommand::IdDylib(_)));
 
         // Calculate minimum required size for the new ID
         let original_cmdsize = lc_writer::calc_dylib_size(&dylib.name);
 
         // Insert new one at the same position, or at the beginning if there was no existing one
         let insert_pos = position.unwrap_or(0);
-        self.commands.insert(insert_pos, LoadCommand::IdDylib(IdDylib { dylib, original_cmdsize }));
+        self.commands.insert(
+            insert_pos,
+            LoadCommand::IdDylib(IdDylib {
+                dylib,
+                original_cmdsize,
+            }),
+        );
     }
 
     /// Remove all RPATH commands matching the given path.
     pub fn remove_rpath(&mut self, path: &[u8]) {
-        self.commands.retain(|cmd| {
-            !matches!(cmd, LoadCommand::Rpath(rpath) if rpath.rpath.path == path)
-        });
+        self.commands
+            .retain(|cmd| !matches!(cmd, LoadCommand::Rpath(rpath) if rpath.rpath.path == path));
     }
 
     /// Remove all LOAD_DYLIB commands matching the given name.
     pub fn remove_load_dylib(&mut self, name: &[u8]) {
-        self.commands.retain(|cmd| {
-            !matches!(cmd, LoadCommand::LoadDylib(dylib) if dylib.dylib.name == name)
-        });
+        self.commands.retain(
+            |cmd| !matches!(cmd, LoadCommand::LoadDylib(dylib) if dylib.dylib.name == name),
+        );
     }
 }
 

@@ -160,7 +160,7 @@ impl MachODylib {
         Self {
             name,
             timestamp: 0,
-            current_version: 0x10000, // 1.0.0
+            current_version: 0x10000,       // 1.0.0
             compatibility_version: 0x10000, // 1.0.0
         }
     }
@@ -1224,7 +1224,7 @@ impl<'a> Object<'a> {
             // Write the dylinker path string (null-terminated)
             buffer.write_bytes(&dylinker.dylinker);
             buffer.write_bytes(&[0]); // null terminator
-            // Pad to 8-byte alignment
+                                      // Pad to 8-byte alignment
             let written = base_size + dylinker.dylinker.len() + 1;
             let aligned = (written + 7) & !7;
             let padding = aligned - written;
@@ -1256,7 +1256,7 @@ impl<'a> Object<'a> {
             // Write the rpath string (null-terminated)
             buffer.write_bytes(&rpath.path);
             buffer.write_bytes(&[0]); // null terminator
-            // Pad to 8-byte alignment
+                                      // Pad to 8-byte alignment
             let written = base_size + rpath.path.len() + 1;
             let aligned = (written + 7) & !7;
             let padding = aligned - written;
@@ -1282,7 +1282,7 @@ impl<'a> Object<'a> {
             // Write the dylib name string (null-terminated)
             buffer.write_bytes(&id_dylib.name);
             buffer.write_bytes(&[0]); // null terminator
-            // Pad to 8-byte alignment
+                                      // Pad to 8-byte alignment
             let written = base_size + id_dylib.name.len() + 1;
             let aligned = (written + 7) & !7;
             let padding = aligned - written;
@@ -1308,7 +1308,7 @@ impl<'a> Object<'a> {
             // Write the dylib name string (null-terminated)
             buffer.write_bytes(&dylib.name);
             buffer.write_bytes(&[0]); // null terminator
-            // Pad to 8-byte alignment
+                                      // Pad to 8-byte alignment
             let written = base_size + dylib.name.len() + 1;
             let aligned = (written + 7) & !7;
             let padding = aligned - written;

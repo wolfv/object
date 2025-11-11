@@ -66,7 +66,8 @@ impl<'data> FatBuilder<'data> {
         let mut slices = Vec::new();
 
         for arch in fat.arches() {
-            let arch_data = arch.data(data)
+            let arch_data = arch
+                .data(data)
                 .map_err(|e| crate::build::Error::new(format!("Failed to read fat arch: {}", e)))?;
             let builder = Builder::read(arch_data)?;
 
@@ -92,7 +93,8 @@ impl<'data> FatBuilder<'data> {
         let mut slices = Vec::new();
 
         for arch in fat.arches() {
-            let arch_data = arch.data(data)
+            let arch_data = arch
+                .data(data)
                 .map_err(|e| crate::build::Error::new(format!("Failed to read fat arch: {}", e)))?;
             let builder = Builder::read(arch_data)?;
 
@@ -118,12 +120,8 @@ impl<'data> FatBuilder<'data> {
         }
 
         // Collect CPU info and alignments before consuming slices
-        let cpu_infos: Vec<(u32, u32)> = self.slices.iter()
-            .map(|(s, _)| get_cpu_info(s))
-            .collect();
-        let alignments: Vec<u32> = self.slices.iter()
-            .map(|(_, align)| *align)
-            .collect();
+        let cpu_infos: Vec<(u32, u32)> = self.slices.iter().map(|(s, _)| get_cpu_info(s)).collect();
+        let alignments: Vec<u32> = self.slices.iter().map(|(_, align)| *align).collect();
 
         // Write each slice
         let mut slice_data = Vec::new();

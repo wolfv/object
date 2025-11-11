@@ -143,16 +143,35 @@ impl LoadCommandWriter {
     }
 
     /// Write an LC_ID_DYLIB command.
-    pub fn write_id_dylib(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32) {
+    pub fn write_id_dylib(
+        &mut self,
+        name: &[u8],
+        timestamp: u32,
+        current_version: u32,
+        compatibility_version: u32,
+    ) {
         let cmdsize = calc_dylib_size(name);
-        self.write_id_dylib_with_size(name, timestamp, current_version, compatibility_version, cmdsize);
+        self.write_id_dylib_with_size(
+            name,
+            timestamp,
+            current_version,
+            compatibility_version,
+            cmdsize,
+        );
     }
 
     /// Write an LC_ID_DYLIB command with custom size (preserves padding).
     ///
     /// If the new name doesn't fit in the original cmdsize, the minimum required
     /// size will be used instead (this happens when the name grows).
-    pub fn write_id_dylib_with_size(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32, original_cmdsize: u32) {
+    pub fn write_id_dylib_with_size(
+        &mut self,
+        name: &[u8],
+        timestamp: u32,
+        current_version: u32,
+        compatibility_version: u32,
+        original_cmdsize: u32,
+    ) {
         let min_size = calc_dylib_size(name);
         // Use the larger of original size or minimum required size
         let cmdsize = original_cmdsize.max(min_size);
@@ -179,23 +198,44 @@ impl LoadCommandWriter {
     }
 
     /// Write an LC_LOAD_DYLIB command.
-    pub fn write_load_dylib(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32) {
+    pub fn write_load_dylib(
+        &mut self,
+        name: &[u8],
+        timestamp: u32,
+        current_version: u32,
+        compatibility_version: u32,
+    ) {
         let cmdsize = calc_dylib_size(name);
-        self.write_load_dylib_with_size(macho::LC_LOAD_DYLIB, name, timestamp, current_version, compatibility_version, cmdsize);
+        self.write_load_dylib_with_size(
+            macho::LC_LOAD_DYLIB,
+            name,
+            timestamp,
+            current_version,
+            compatibility_version,
+            cmdsize,
+        );
     }
 
     /// Write an LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB command with custom size (preserves padding).
     ///
     /// If the new name doesn't fit in the original cmdsize, the minimum required
     /// size will be used instead (this happens when the name grows).
-    pub fn write_load_dylib_with_size(&mut self, cmd: u32, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32, original_cmdsize: u32) {
+    pub fn write_load_dylib_with_size(
+        &mut self,
+        cmd: u32,
+        name: &[u8],
+        timestamp: u32,
+        current_version: u32,
+        compatibility_version: u32,
+        original_cmdsize: u32,
+    ) {
         let min_size = calc_dylib_size(name);
         // Use the larger of original size or minimum required size
         let cmdsize = original_cmdsize.max(min_size);
 
         let start_pos = self.buffer.len();
 
-        self.write_u32(cmd);  // Use the provided command type (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB)
+        self.write_u32(cmd); // Use the provided command type (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB)
         self.write_u32(cmdsize);
         self.write_u32(24); // offset to name string (always 24)
         self.write_u32(timestamp);
@@ -378,7 +418,7 @@ pub fn calc_source_version_size() -> u32 {
 pub fn calc_build_version_size(_ntools: u32) -> u32 {
     // Base size with ntools=0
     24 // cmd + cmdsize + platform + minos + sdk + ntools
-    // TODO: Add build tool support: + (ntools * 8)
+       // TODO: Add build tool support: + (ntools * 8)
 }
 
 /// Calculate the size of a version min command.
@@ -414,9 +454,7 @@ pub fn calc_raw_command_size(data: &[u8]) -> u32 {
 /// command structure. Instead, we build the commands and check the buffer size.
 /// Keeping this for reference/future use.
 #[allow(dead_code)]
-pub fn calc_total_load_commands_size(
-    load_commands: &super::LoadCommands<'_>,
-) -> (u32, u32) {
+pub fn calc_total_load_commands_size(load_commands: &super::LoadCommands<'_>) -> (u32, u32) {
     let mut total_size = 0u32;
     let mut cmd_count = 0u32;
 
@@ -616,8 +654,8 @@ mod tests {
         // Verify stacksize (u64)
         assert_eq!(
             u64::from_le_bytes([
-                buffer[16], buffer[17], buffer[18], buffer[19], buffer[20], buffer[21],
-                buffer[22], buffer[23]
+                buffer[16], buffer[17], buffer[18], buffer[19], buffer[20], buffer[21], buffer[22],
+                buffer[23]
             ]),
             0x2000
         );
@@ -865,7 +903,10 @@ mod tests {
     fn test_write_raw_command() {
         let mut writer = LoadCommandWriter::new(Endianness::Little);
         // Create a fake raw command (must already include cmd, cmdsize, and be aligned)
-        let raw_data = vec![0x99, 0x88, 0x77, 0x66, 0x10, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00, 0x00, 0x00];
+        let raw_data = vec![
+            0x99, 0x88, 0x77, 0x66, 0x10, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00,
+            0x00, 0x00,
+        ];
         writer.write_raw_command(&raw_data);
         let (buffer, count) = writer.into_bytes();
 
@@ -881,7 +922,10 @@ mod tests {
         let mut writer = LoadCommandWriter::new(Endianness::Little);
         // Raw command data - assumed to already include any necessary padding
         // This would be 13 bytes, but raw commands are assumed pre-aligned
-        let raw_data = vec![0x01, 0x02, 0x03, 0x04, 0x10, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x00, 0x00, 0x00];
+        let raw_data = vec![
+            0x01, 0x02, 0x03, 0x04, 0x10, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x00,
+            0x00, 0x00,
+        ];
         writer.write_raw_command(&raw_data);
         let (buffer, count) = writer.into_bytes();
 

@@ -2,7 +2,6 @@
 ///
 /// These tests verify that our Builder can read and modify actual binaries
 /// produced by real compilers and linkers.
-
 use object::build::macho::Builder;
 use object::read::macho::MachHeader;
 use object::{macho, Architecture, Endianness};
@@ -98,7 +97,8 @@ fn real_world_modify_aarch64_executable() {
     let modified_data = builder.write().expect("Failed to write modified file");
 
     // Verify the modified file is still valid
-    let header = macho::MachHeader64::parse(&*modified_data, 0).expect("Should parse as valid Mach-O");
+    let header =
+        macho::MachHeader64::parse(&*modified_data, 0).expect("Should parse as valid Mach-O");
     let endian: Endianness = header.endian().unwrap();
 
     assert_eq!(header.filetype(endian), macho::MH_EXECUTE);
@@ -113,7 +113,10 @@ fn real_world_modify_aarch64_executable() {
         }
     }
 
-    assert!(rpath_count >= 2, "Should have at least the 2 RPATHs we added");
+    assert!(
+        rpath_count >= 2,
+        "Should have at least the 2 RPATHs we added"
+    );
 }
 
 /// Test reading a Go-compiled executable (complex real-world binary)
@@ -230,7 +233,10 @@ fn real_world_modified_structure_validity() {
     // Verify header is sane
     assert_eq!(header.filetype(endian), macho::MH_EXECUTE);
     assert!(header.ncmds(endian) > 0, "Should have load commands");
-    assert!(header.sizeofcmds(endian) > 0, "Load commands should have size");
+    assert!(
+        header.sizeofcmds(endian) > 0,
+        "Load commands should have size"
+    );
 
     // Verify we can iterate through all load commands without error
     let mut commands = header.load_commands(endian, &*modified, 0).unwrap();

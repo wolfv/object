@@ -2,7 +2,6 @@
 ///
 /// These tests verify that our Builder produces identical output to Apple's tools.
 /// They require macOS and the presence of install_name_tool.
-
 use object::build::macho::Builder;
 use object::read::macho::MachHeader;
 use object::write::{MachODylib, MachOEntryPoint, MachOLoadDylinker, MachORpath};
@@ -487,9 +486,7 @@ fn compat_multiple_round_trips_with_install_name_tool() {
     // by our current Builder implementation (e.g., header padding changes)
     let builder_result = Builder::read(&*bytes);
     if builder_result.is_err() {
-        eprintln!(
-            "Note: Builder cannot read install_name_tool output yet. This is expected."
-        );
+        eprintln!("Note: Builder cannot read install_name_tool output yet. This is expected.");
         fs::remove_file(&temp_path).ok();
         // This is a known limitation - skip the rest of the test
         return;

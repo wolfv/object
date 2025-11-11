@@ -932,7 +932,9 @@ fn print_function_starts<Mach: MachHeader>(
     };
     p.group("FunctionStarts", |p| {
         for addr in function_starts {
-            addr.print_err(p).map(|addr| p.field_hex("Address", addr));
+            if let Some(addr) = addr.print_err(p) {
+                p.field_hex("Address", addr)
+            }
         }
     });
 }

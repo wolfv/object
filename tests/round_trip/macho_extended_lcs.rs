@@ -1,9 +1,7 @@
 /// Tests for extended Mach-O load commands (LC_UUID, LC_SOURCE_VERSION, LC_VERSION_MIN_*, etc.)
-
 use object::read::macho::{LoadCommandVariant, MachHeader};
 use object::write::{
-    MachODylib, MachOEntryPoint, MachOLoadDylinker, MachOSourceVersion, MachOUuid,
-    MachOVersionMin,
+    MachODylib, MachOEntryPoint, MachOLoadDylinker, MachOSourceVersion, MachOUuid, MachOVersionMin,
 };
 use object::{macho, write, Architecture, BinaryFormat, Endianness};
 
@@ -22,8 +20,8 @@ fn macho_uuid_command() {
 
     // Set a specific UUID
     let test_uuid = [
-        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
-        0x32, 0x10,
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32,
+        0x10,
     ];
     object.set_macho_uuid(MachOUuid::new(test_uuid));
 

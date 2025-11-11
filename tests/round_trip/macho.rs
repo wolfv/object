@@ -249,7 +249,9 @@ fn macho_dylib_with_dependencies() {
 
     // Add library dependencies
     object.add_macho_load_dylib(MachODylib::from_str("/usr/lib/libSystem.B.dylib"));
-    object.add_macho_load_dylib(MachODylib::from_str("@rpath/OtherFramework.framework/OtherFramework"));
+    object.add_macho_load_dylib(MachODylib::from_str(
+        "@rpath/OtherFramework.framework/OtherFramework",
+    ));
 
     // Add an rpath
     object.add_macho_rpath(MachORpath::from_str("@loader_path"));
@@ -278,8 +280,14 @@ fn macho_dylib_with_dependencies() {
                 LoadCommandVariant::IdDylib(dylib_cmd) => {
                     found_id_dylib = true;
                     // Verify version info
-                    assert_eq!(dylib_cmd.dylib.current_version.get(endian), MachODylib::encode_version(2, 5, 1));
-                    assert_eq!(dylib_cmd.dylib.compatibility_version.get(endian), MachODylib::encode_version(1, 0, 0));
+                    assert_eq!(
+                        dylib_cmd.dylib.current_version.get(endian),
+                        MachODylib::encode_version(2, 5, 1)
+                    );
+                    assert_eq!(
+                        dylib_cmd.dylib.compatibility_version.get(endian),
+                        MachODylib::encode_version(1, 0, 0)
+                    );
                 }
                 LoadCommandVariant::Dylib(_) => {
                     load_dylib_count += 1;

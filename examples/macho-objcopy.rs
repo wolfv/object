@@ -95,7 +95,10 @@ fn copy_binary(input: &PathBuf, output: &PathBuf) {
 
     // Try to parse as fat binary first
     let output_data = if let Ok(fat_builder) = FatBuilder::read(&*data) {
-        println!("Detected universal binary with {} architectures", fat_builder.len());
+        println!(
+            "Detected universal binary with {} architectures",
+            fat_builder.len()
+        );
         match fat_builder.write() {
             Ok(data) => data,
             Err(e) => {
@@ -141,8 +144,10 @@ fn copy_binary(input: &PathBuf, output: &PathBuf) {
     if input_size == output_size {
         println!("  ✓ Sizes match");
     } else {
-        println!("  ✗ Size mismatch (diff: {} bytes)",
-                 (output_size as i64 - input_size as i64).abs());
+        println!(
+            "  ✗ Size mismatch (diff: {} bytes)",
+            (output_size as i64 - input_size as i64).abs()
+        );
     }
 
     // Check if identical
@@ -155,7 +160,10 @@ fn copy_binary(input: &PathBuf, output: &PathBuf) {
         // Find first difference
         for (i, (a, b)) in data.iter().zip(output_data.iter()).enumerate() {
             if a != b {
-                println!("  First difference at offset 0x{:x}: 0x{:02x} -> 0x{:02x}", i, a, b);
+                println!(
+                    "  First difference at offset 0x{:x}: 0x{:02x} -> 0x{:02x}",
+                    i, a, b
+                );
                 break;
             }
         }
@@ -180,12 +188,19 @@ fn verify_roundtrip(input: &PathBuf) {
 
     // Try to parse as fat binary first
     let output_data = if let Ok(fat_builder) = FatBuilder::read(&*original_data) {
-        println!("Detected universal binary with {} architectures", fat_builder.len());
+        println!(
+            "Detected universal binary with {} architectures",
+            fat_builder.len()
+        );
 
         // Show architecture info
         for (i, slice) in fat_builder.iter().enumerate() {
-            println!("  Architecture {}: CPU type 0x{:x}, subtype 0x{:x}",
-                     i, slice.cpu_type(), slice.cpu_subtype());
+            println!(
+                "  Architecture {}: CPU type 0x{:x}, subtype 0x{:x}",
+                i,
+                slice.cpu_type(),
+                slice.cpu_subtype()
+            );
         }
 
         match fat_builder.write() {
@@ -206,8 +221,11 @@ fn verify_roundtrip(input: &PathBuf) {
         };
 
         println!("Detected single-architecture Mach-O binary");
-        println!("  CPU type: 0x{:x}, subtype: 0x{:x}",
-                 builder.cpu_type(), builder.cpu_subtype());
+        println!(
+            "  CPU type: 0x{:x}, subtype: 0x{:x}",
+            builder.cpu_type(),
+            builder.cpu_subtype()
+        );
 
         match builder.write() {
             Ok(data) => data,
@@ -225,8 +243,10 @@ fn verify_roundtrip(input: &PathBuf) {
     if original_data.len() == output_data.len() {
         println!("  ✓ Sizes match");
     } else {
-        println!("  ✗ Size mismatch (diff: {} bytes)",
-                 (output_data.len() as i64 - original_data.len() as i64).abs());
+        println!(
+            "  ✗ Size mismatch (diff: {} bytes)",
+            (output_data.len() as i64 - original_data.len() as i64).abs()
+        );
     }
 
     // Check if identical
@@ -247,7 +267,10 @@ fn verify_roundtrip(input: &PathBuf) {
         }
 
         if let Some(offset) = first_diff {
-            println!("  First difference at offset 0x{:x} (byte {})", offset, offset);
+            println!(
+                "  First difference at offset 0x{:x} (byte {})",
+                offset, offset
+            );
             println!("    Original: 0x{:02x}", original_data[offset]);
             println!("    Output:   0x{:02x}", output_data[offset]);
 
@@ -276,7 +299,10 @@ fn verify_roundtrip(input: &PathBuf) {
             }
             println!();
         } else if original_data.len() != output_data.len() {
-            println!("  Files are identical up to {} bytes, but have different lengths", min_len);
+            println!(
+                "  Files are identical up to {} bytes, but have different lengths",
+                min_len
+            );
         }
 
         process::exit(1);
