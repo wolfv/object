@@ -146,6 +146,8 @@ impl<'data> Builder<'data> {
                 }
                 LoadCommandVariant::Dylib(dylib_cmd) => {
                     let name = command.string(endian, dylib_cmd.dylib.name)?;
+                    let original_cmdsize = command.cmdsize();
+                    let original_cmd = command.cmd();
                     builder.load_commands.commands.push(LoadCommand::LoadDylib(LoadDylib {
                         dylib: MachODylib {
                             name: name.to_vec(),
@@ -153,10 +155,13 @@ impl<'data> Builder<'data> {
                             current_version: dylib_cmd.dylib.current_version.get(endian),
                             compatibility_version: dylib_cmd.dylib.compatibility_version.get(endian),
                         },
+                        original_cmdsize,
+                        original_cmd,
                     }));
                 }
                 LoadCommandVariant::IdDylib(dylib_cmd) => {
                     let name = command.string(endian, dylib_cmd.dylib.name)?;
+                    let original_cmdsize = command.cmdsize();
                     builder.load_commands.commands.push(LoadCommand::IdDylib(IdDylib {
                         dylib: MachODylib {
                             name: name.to_vec(),
@@ -164,14 +169,17 @@ impl<'data> Builder<'data> {
                             current_version: dylib_cmd.dylib.current_version.get(endian),
                             compatibility_version: dylib_cmd.dylib.compatibility_version.get(endian),
                         },
+                        original_cmdsize,
                     }));
                 }
                 LoadCommandVariant::Rpath(rpath_cmd) => {
                     let path = command.string(endian, rpath_cmd.path)?;
+                    let original_cmdsize = command.cmdsize();
                     builder.load_commands.commands.push(LoadCommand::Rpath(Rpath {
                         rpath: MachORpath {
                             path: path.to_vec(),
                         },
+                        original_cmdsize,
                     }));
                 }
                 // All other commands: store as raw to preserve exact order and structure
@@ -232,6 +240,7 @@ impl<'data> Builder<'data> {
         // Track the first offset where actual section data begins
         // We need to look at sections, not just segments, because the __TEXT segment
         // includes the header and load commands at its start
+        let mut has_sections_with_data = false;
         for section in sections {
             let section_offset = section.offset.get(endian) as u64;
             let section_size = section.size.get(endian) as u64;
@@ -240,6 +249,15 @@ impl<'data> Builder<'data> {
                 if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
                     self.first_segment_data_offset = section_offset;
                 }
+                has_sections_with_data = true;
+            }
+        }
+
+        // If the segment has no sections with data, but has filesize > 0 and fileoff > 0,
+        // use the segment's fileoff as the boundary (e.g., __LINKEDIT)
+        if !has_sections_with_data && filesize > 0 && fileoff > 0 {
+            if self.first_segment_data_offset == 0 || fileoff < self.first_segment_data_offset {
+                self.first_segment_data_offset = fileoff;
             }
         }
 
@@ -291,6 +309,7 @@ impl<'data> Builder<'data> {
         // Track the first offset where actual section data begins
         // We need to look at sections, not just segments, because the __TEXT segment
         // includes the header and load commands at its start
+        let mut has_sections_with_data = false;
         for section in sections {
             let section_offset = section.offset.get(endian) as u64;
             let section_size = section.size.get(endian);
@@ -299,6 +318,15 @@ impl<'data> Builder<'data> {
                 if self.first_segment_data_offset == 0 || section_offset < self.first_segment_data_offset {
                     self.first_segment_data_offset = section_offset;
                 }
+                has_sections_with_data = true;
+            }
+        }
+
+        // If the segment has no sections with data, but has filesize > 0 and fileoff > 0,
+        // use the segment's fileoff as the boundary (e.g., __LINKEDIT)
+        if !has_sections_with_data && filesize > 0 && fileoff > 0 {
+            if self.first_segment_data_offset == 0 || fileoff < self.first_segment_data_offset {
+                self.first_segment_data_offset = fileoff;
             }
         }
 
@@ -396,11 +424,13 @@ impl<'data> Builder<'data> {
             let new_lc_end = header_size as u64 + new_sizeofcmds as u64;
 
             if new_lc_end > self.first_segment_data_offset {
+                let available_space = self.first_segment_data_offset.saturating_sub(header_size as u64);
                 return Err(Error::new(format!(
-                    "New load commands ({} bytes) exceed available space before first segment (max {} bytes). \
-                     Full segment relocation not yet implemented.",
+                    "Changing install names or rpaths can't be redone because larger updated load commands \
+                     do not fit (need {} bytes, have {} bytes available). \
+                     The binary should be relinked with -headerpad_max_install_names to reserve space for changes.",
                     new_sizeofcmds,
-                    self.first_segment_data_offset.saturating_sub(header_size as u64)
+                    available_space
                 )));
             }
 
@@ -469,22 +499,25 @@ impl<'data> Builder<'data> {
         for command in &self.load_commands.commands {
             match command {
                 LoadCommand::Rpath(rpath) => {
-                    writer.write_rpath(&rpath.rpath.path);
+                    writer.write_rpath_with_size(&rpath.rpath.path, rpath.original_cmdsize);
                 }
                 LoadCommand::LoadDylib(load_dylib) => {
-                    writer.write_load_dylib(
+                    writer.write_load_dylib_with_size(
+                        load_dylib.original_cmd,
                         &load_dylib.dylib.name,
                         load_dylib.dylib.timestamp,
                         load_dylib.dylib.current_version,
                         load_dylib.dylib.compatibility_version,
+                        load_dylib.original_cmdsize,
                     );
                 }
                 LoadCommand::IdDylib(id_dylib) => {
-                    writer.write_id_dylib(
+                    writer.write_id_dylib_with_size(
                         &id_dylib.dylib.name,
                         id_dylib.dylib.timestamp,
                         id_dylib.dylib.current_version,
                         id_dylib.dylib.compatibility_version,
+                        id_dylib.original_cmdsize,
                     );
                 }
                 LoadCommand::Raw { cmd: _, data } => {
@@ -504,6 +537,25 @@ impl<'data> Builder<'data> {
     /// Remove all RPATHs that match the given path.
     pub fn remove_rpath(&mut self, path: &str) {
         self.load_commands.remove_rpath(path.as_bytes());
+    }
+
+    /// Change an RPATH from old to new (preserves order).
+    ///
+    /// This replaces the RPATH in-place, maintaining the original position
+    /// in the command list (similar to install_name_tool -rpath).
+    ///
+    /// When the path changes, the cmdsize is recalculated to the minimum needed
+    /// to match install_name_tool's behavior (it doesn't preserve padding for changed paths).
+    pub fn change_rpath(&mut self, old_path: &str, new_path: &str) {
+        for cmd in &mut self.load_commands.commands {
+            if let LoadCommand::Rpath(rpath) = cmd {
+                if rpath.rpath.path == old_path.as_bytes() {
+                    rpath.rpath.path = new_path.as_bytes().to_vec();
+                    // Recalculate cmdsize for the new path (matching install_name_tool behavior)
+                    rpath.original_cmdsize = lc_writer::calc_rpath_size(&rpath.rpath.path);
+                }
+            }
+        }
     }
 
     /// Get all RPATHs.
@@ -527,11 +579,32 @@ impl<'data> Builder<'data> {
         });
     }
 
+    /// Set the install name for a dylib with explicit timestamp.
+    pub fn set_install_name_with_timestamp(&mut self, name: &str, current_version: u32, compatibility_version: u32, timestamp: u32) {
+        self.load_commands.set_id_dylib(MachODylib {
+            name: name.as_bytes().to_vec(),
+            timestamp,
+            current_version,
+            compatibility_version,
+        });
+    }
+
     /// Get the install name if this is a dylib.
     pub fn install_name(&self) -> Option<&[u8]> {
         self.load_commands.commands.iter().find_map(|cmd| {
             if let LoadCommand::IdDylib(id_dylib) = cmd {
                 Some(id_dylib.dylib.name.as_slice())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the full IdDylib info (name + versions) if this is a dylib.
+    pub fn id_dylib(&self) -> Option<&MachODylib> {
+        self.load_commands.commands.iter().find_map(|cmd| {
+            if let LoadCommand::IdDylib(id_dylib) = cmd {
+                Some(&id_dylib.dylib)
             } else {
                 None
             }
@@ -552,11 +625,16 @@ impl<'data> Builder<'data> {
     ///
     /// This replaces the dependency in-place, maintaining the original position
     /// in the dependency list (similar to install_name_tool -change).
+    ///
+    /// When the dependency name changes, the cmdsize is recalculated to the minimum needed
+    /// to match install_name_tool's behavior (it doesn't preserve padding for changed dependencies).
     pub fn change_dependency(&mut self, old_name: &str, new_name: &str) {
         for cmd in &mut self.load_commands.commands {
             if let LoadCommand::LoadDylib(dylib) = cmd {
                 if dylib.dylib.name == old_name.as_bytes() {
                     dylib.dylib.name = new_name.as_bytes().to_vec();
+                    // Recalculate cmdsize for the new name (matching install_name_tool behavior)
+                    dylib.original_cmdsize = lc_writer::calc_dylib_size(&dylib.dylib.name);
                 }
             }
         }
@@ -626,22 +704,33 @@ impl<'data> LoadCommands<'data> {
 
     /// Add an RPATH command.
     pub fn add_rpath(&mut self, path: Vec<u8>) {
+        let original_cmdsize = lc_writer::calc_rpath_size(&path);
         self.commands.push(LoadCommand::Rpath(Rpath {
             rpath: MachORpath { path },
+            original_cmdsize,
         }));
     }
 
     /// Add a LOAD_DYLIB command.
     pub fn add_load_dylib(&mut self, dylib: MachODylib) {
-        self.commands.push(LoadCommand::LoadDylib(LoadDylib { dylib }));
+        let original_cmdsize = lc_writer::calc_dylib_size(&dylib.name);
+        self.commands.push(LoadCommand::LoadDylib(LoadDylib { dylib, original_cmdsize, original_cmd: macho::LC_LOAD_DYLIB }));
     }
 
     /// Set the ID_DYLIB command (replaces existing if present).
     pub fn set_id_dylib(&mut self, dylib: MachODylib) {
+        // Find the position of the existing ID_DYLIB (if any)
+        let position = self.commands.iter().position(|cmd| matches!(cmd, LoadCommand::IdDylib(_)));
+
         // Remove any existing ID_DYLIB
         self.commands.retain(|cmd| !matches!(cmd, LoadCommand::IdDylib(_)));
-        // Add new one at the end (or we could insert at a specific position)
-        self.commands.push(LoadCommand::IdDylib(IdDylib { dylib }));
+
+        // Calculate minimum required size for the new ID
+        let original_cmdsize = lc_writer::calc_dylib_size(&dylib.name);
+
+        // Insert new one at the same position, or at the beginning if there was no existing one
+        let insert_pos = position.unwrap_or(0);
+        self.commands.insert(insert_pos, LoadCommand::IdDylib(IdDylib { dylib, original_cmdsize }));
     }
 
     /// Remove all RPATH commands matching the given path.
@@ -678,6 +767,8 @@ pub struct EntryPoint {
 pub struct Rpath {
     /// The rpath.
     pub rpath: MachORpath,
+    /// The original cmdsize from the binary (preserves padding for byte-for-byte compatibility).
+    pub original_cmdsize: u32,
 }
 
 /// LC_ID_DYLIB load command.
@@ -685,13 +776,19 @@ pub struct Rpath {
 pub struct IdDylib {
     /// The dylib information.
     pub dylib: MachODylib,
+    /// The original cmdsize from the binary (preserves padding for byte-for-byte compatibility).
+    pub original_cmdsize: u32,
 }
 
-/// LC_LOAD_DYLIB load command.
+/// LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB load command.
 #[derive(Debug, Clone)]
 pub struct LoadDylib {
     /// The dylib information.
     pub dylib: MachODylib,
+    /// The original cmdsize from the binary (preserves padding for byte-for-byte compatibility).
+    pub original_cmdsize: u32,
+    /// The original command type (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB).
+    pub original_cmd: u32,
 }
 
 /// LC_UUID load command.

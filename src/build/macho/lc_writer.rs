@@ -112,13 +112,32 @@ impl LoadCommandWriter {
     /// Write an LC_RPATH command.
     pub fn write_rpath(&mut self, path: &[u8]) {
         let cmdsize = calc_rpath_size(path);
+        self.write_rpath_with_size(path, cmdsize);
+    }
+
+    /// Write an LC_RPATH command with custom size (preserves padding).
+    ///
+    /// If the new path doesn't fit in the original cmdsize, the minimum required
+    /// size will be used instead (this happens when the path grows).
+    pub fn write_rpath_with_size(&mut self, path: &[u8], original_cmdsize: u32) {
+        let min_size = calc_rpath_size(path);
+        // Use the larger of original size or minimum required size
+        let cmdsize = original_cmdsize.max(min_size);
+
+        let start_pos = self.buffer.len();
 
         self.write_u32(macho::LC_RPATH);
         self.write_u32(cmdsize);
         self.write_u32(12); // offset to path string (always 12)
         self.write_bytes(path);
         self.buffer.push(0); // null terminator
-        self.pad_to_alignment();
+
+        // Pad to the specified cmdsize (preserves original padding when possible)
+        let current_size = self.buffer.len() - start_pos;
+        let padding_needed = (cmdsize as usize).saturating_sub(current_size);
+        for _ in 0..padding_needed {
+            self.buffer.push(0);
+        }
 
         self.cmd_count += 1;
     }
@@ -126,6 +145,19 @@ impl LoadCommandWriter {
     /// Write an LC_ID_DYLIB command.
     pub fn write_id_dylib(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32) {
         let cmdsize = calc_dylib_size(name);
+        self.write_id_dylib_with_size(name, timestamp, current_version, compatibility_version, cmdsize);
+    }
+
+    /// Write an LC_ID_DYLIB command with custom size (preserves padding).
+    ///
+    /// If the new name doesn't fit in the original cmdsize, the minimum required
+    /// size will be used instead (this happens when the name grows).
+    pub fn write_id_dylib_with_size(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32, original_cmdsize: u32) {
+        let min_size = calc_dylib_size(name);
+        // Use the larger of original size or minimum required size
+        let cmdsize = original_cmdsize.max(min_size);
+
+        let start_pos = self.buffer.len();
 
         self.write_u32(macho::LC_ID_DYLIB);
         self.write_u32(cmdsize);
@@ -135,7 +167,13 @@ impl LoadCommandWriter {
         self.write_u32(compatibility_version);
         self.write_bytes(name);
         self.buffer.push(0); // null terminator
-        self.pad_to_alignment();
+
+        // Pad to the specified cmdsize (preserves original padding when possible)
+        let current_size = self.buffer.len() - start_pos;
+        let padding_needed = (cmdsize as usize).saturating_sub(current_size);
+        for _ in 0..padding_needed {
+            self.buffer.push(0);
+        }
 
         self.cmd_count += 1;
     }
@@ -143,8 +181,21 @@ impl LoadCommandWriter {
     /// Write an LC_LOAD_DYLIB command.
     pub fn write_load_dylib(&mut self, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32) {
         let cmdsize = calc_dylib_size(name);
+        self.write_load_dylib_with_size(macho::LC_LOAD_DYLIB, name, timestamp, current_version, compatibility_version, cmdsize);
+    }
 
-        self.write_u32(macho::LC_LOAD_DYLIB);
+    /// Write an LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB command with custom size (preserves padding).
+    ///
+    /// If the new name doesn't fit in the original cmdsize, the minimum required
+    /// size will be used instead (this happens when the name grows).
+    pub fn write_load_dylib_with_size(&mut self, cmd: u32, name: &[u8], timestamp: u32, current_version: u32, compatibility_version: u32, original_cmdsize: u32) {
+        let min_size = calc_dylib_size(name);
+        // Use the larger of original size or minimum required size
+        let cmdsize = original_cmdsize.max(min_size);
+
+        let start_pos = self.buffer.len();
+
+        self.write_u32(cmd);  // Use the provided command type (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB)
         self.write_u32(cmdsize);
         self.write_u32(24); // offset to name string (always 24)
         self.write_u32(timestamp);
@@ -152,7 +203,13 @@ impl LoadCommandWriter {
         self.write_u32(compatibility_version);
         self.write_bytes(name);
         self.buffer.push(0); // null terminator
-        self.pad_to_alignment();
+
+        // Pad to the specified cmdsize (preserves original padding when possible)
+        let current_size = self.buffer.len() - start_pos;
+        let padding_needed = (cmdsize as usize).saturating_sub(current_size);
+        for _ in 0..padding_needed {
+            self.buffer.push(0);
+        }
 
         self.cmd_count += 1;
     }

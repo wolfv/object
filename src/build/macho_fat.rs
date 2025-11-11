@@ -15,14 +15,30 @@ use core::marker::PhantomData;
 /// architecture slices (e.g., x86_64 and arm64 in a single file).
 #[derive(Debug)]
 pub struct FatBuilder<'data> {
-    /// The individual architecture slices.
-    pub slices: Vec<Builder<'data>>,
+    /// The individual architecture slices with their alignment (as power of 2).
+    /// The alignment value is preserved from the original fat binary for byte-for-byte compatibility.
+    pub slices: Vec<(Builder<'data>, u32)>,
     /// Whether this is a 64-bit fat binary (true) or 32-bit (false).
     is_64bit: bool,
     marker: PhantomData<&'data ()>,
 }
 
 impl<'data> FatBuilder<'data> {
+    /// Get default alignment for a given CPU type.
+    ///
+    /// Returns alignment as power of 2 (e.g., 12 = 4KB, 14 = 16KB).
+    /// This matches Apple's typical alignment choices for different architectures.
+    fn default_alignment_for_cpu(cpu_type: u32) -> u32 {
+        match cpu_type {
+            // x86 and x86_64 typically use 4KB (2^12) alignment
+            macho::CPU_TYPE_X86 | macho::CPU_TYPE_X86_64 => 12,
+            // ARM64 uses 16KB (2^14) alignment (matching page size on Apple Silicon)
+            macho::CPU_TYPE_ARM64 | macho::CPU_TYPE_ARM64_32 => 14,
+            // Default to 14 (16KB) for other architectures as a safe choice
+            _ => 14,
+        }
+    }
+
     /// Read a fat/universal Mach-O binary from data.
     ///
     /// This detects whether the file is a 32-bit or 64-bit fat binary
@@ -53,7 +69,11 @@ impl<'data> FatBuilder<'data> {
             let arch_data = arch.data(data)
                 .map_err(|e| crate::build::Error::new(format!("Failed to read fat arch: {}", e)))?;
             let builder = Builder::read(arch_data)?;
-            slices.push(builder);
+
+            // Preserve the original alignment from the fat binary
+            let align = arch.align();
+
+            slices.push((builder, align));
         }
 
         Ok(FatBuilder {
@@ -75,7 +95,11 @@ impl<'data> FatBuilder<'data> {
             let arch_data = arch.data(data)
                 .map_err(|e| crate::build::Error::new(format!("Failed to read fat arch: {}", e)))?;
             let builder = Builder::read(arch_data)?;
-            slices.push(builder);
+
+            // Preserve the original alignment from the fat binary
+            let align = arch.align();
+
+            slices.push((builder, align));
         }
 
         Ok(FatBuilder {
@@ -93,24 +117,22 @@ impl<'data> FatBuilder<'data> {
             return Err(crate::build::Error::new("No slices to write"));
         }
 
-        // Collect CPU info before consuming slices
+        // Collect CPU info and alignments before consuming slices
         let cpu_infos: Vec<(u32, u32)> = self.slices.iter()
-            .map(|s| get_cpu_info(s))
+            .map(|(s, _)| get_cpu_info(s))
+            .collect();
+        let alignments: Vec<u32> = self.slices.iter()
+            .map(|(_, align)| *align)
             .collect();
 
         // Write each slice
         let mut slice_data = Vec::new();
-        for slice in self.slices {
+        for (slice, _align) in self.slices {
             let data = slice.write()?;
             slice_data.push(data);
         }
 
-        // Calculate alignment (Apple uses 14 = 16KB alignment for 64-bit, 12 = 4KB for 32-bit)
-        // We'll use 14 (16KB) for all slices to be safe
-        let align_bits = 14u32;
-        let align_size = 1u64 << align_bits;
-
-        // Calculate offsets
+        // Calculate offsets using preserved alignments
         let header_size = core::mem::size_of::<macho::FatHeader>();
         let arch_size = if self.is_64bit {
             core::mem::size_of::<macho::FatArch64>()
@@ -119,15 +141,17 @@ impl<'data> FatBuilder<'data> {
         };
         let mut offset = (header_size + arch_size * slice_data.len()) as u64;
 
-        // Align first slice
-        offset = (offset + align_size - 1) & !(align_size - 1);
-
         let mut arches = Vec::new();
-        for data in &slice_data {
-            arches.push((offset, data.len() as u64));
-            offset += data.len() as u64;
-            // Align next slice
+        for (i, data) in slice_data.iter().enumerate() {
+            // Use preserved alignment for each slice
+            let align_bits = alignments[i];
+            let align_size = 1u64 << align_bits;
+
+            // Align to this slice's alignment
             offset = (offset + align_size - 1) & !(align_size - 1);
+
+            arches.push((offset, data.len() as u64, align_bits));
+            offset += data.len() as u64;
         }
 
         // Build the output
@@ -142,7 +166,7 @@ impl<'data> FatBuilder<'data> {
             buffer.extend_from_slice(bytes_of(&header));
 
             // Write 64-bit arch headers
-            for (i, (offset, size)) in arches.iter().enumerate() {
+            for (i, (offset, size, align_bits)) in arches.iter().enumerate() {
                 let (cputype, cpusubtype) = cpu_infos[i];
 
                 let arch = macho::FatArch64 {
@@ -150,7 +174,7 @@ impl<'data> FatBuilder<'data> {
                     cpusubtype: U32::new(BigEndian, cpusubtype),
                     offset: U64::new(BigEndian, *offset),
                     size: U64::new(BigEndian, *size),
-                    align: U32::new(BigEndian, align_bits),
+                    align: U32::new(BigEndian, *align_bits),
                     reserved: U32::new(BigEndian, 0),
                 };
                 buffer.extend_from_slice(bytes_of(&arch));
@@ -164,7 +188,7 @@ impl<'data> FatBuilder<'data> {
             buffer.extend_from_slice(bytes_of(&header));
 
             // Write 32-bit arch headers
-            for (i, (offset, size)) in arches.iter().enumerate() {
+            for (i, (offset, size, align_bits)) in arches.iter().enumerate() {
                 let (cputype, cpusubtype) = cpu_infos[i];
 
                 let arch = macho::FatArch32 {
@@ -172,7 +196,7 @@ impl<'data> FatBuilder<'data> {
                     cpusubtype: U32::new(BigEndian, cpusubtype),
                     offset: U32::new(BigEndian, *offset as u32),
                     size: U32::new(BigEndian, *size as u32),
-                    align: U32::new(BigEndian, align_bits),
+                    align: U32::new(BigEndian, *align_bits),
                 };
                 buffer.extend_from_slice(bytes_of(&arch));
             }
@@ -210,22 +234,22 @@ impl<'data> FatBuilder<'data> {
 
     /// Get a specific architecture slice by index.
     pub fn get_slice(&self, index: usize) -> Option<&Builder<'data>> {
-        self.slices.get(index)
+        self.slices.get(index).map(|(builder, _)| builder)
     }
 
     /// Get a mutable reference to a specific architecture slice by index.
     pub fn get_slice_mut(&mut self, index: usize) -> Option<&mut Builder<'data>> {
-        self.slices.get_mut(index)
+        self.slices.get_mut(index).map(|(builder, _)| builder)
     }
 
     /// Iterate over all slices.
     pub fn iter(&self) -> impl Iterator<Item = &Builder<'data>> {
-        self.slices.iter()
+        self.slices.iter().map(|(builder, _)| builder)
     }
 
     /// Iterate mutably over all slices.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Builder<'data>> {
-        self.slices.iter_mut()
+        self.slices.iter_mut().map(|(builder, _)| builder)
     }
 
     /// Apply a function to all slices.
@@ -243,7 +267,7 @@ impl<'data> FatBuilder<'data> {
     where
         F: FnMut(&mut Builder<'data>),
     {
-        for slice in &mut self.slices {
+        for (slice, _) in &mut self.slices {
             f(slice);
         }
     }
