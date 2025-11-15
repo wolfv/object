@@ -17,6 +17,8 @@ mod macho;
 mod macho_builder;
 #[cfg(all(feature = "build", target_os = "macos"))]
 mod macho_builder_compat;
+#[cfg(feature = "build")]
+mod macho_error_tests;
 mod macho_extended_lcs;
 #[cfg(feature = "build")]
 mod macho_real_world;

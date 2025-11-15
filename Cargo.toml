@@ -113,6 +113,17 @@ unstable-all = ["all", "unstable"]
 # stable interface of this crate.
 rustc-dep-of-std = ['core', 'alloc', 'memchr/rustc-dep-of-std']
 
+#=======================================
+# Examples
+
+[[example]]
+name = "macho-tool"
+required-features = ["build_core", "macho"]
+
+[[example]]
+name = "macho-objcopy"
+required-features = ["build_core", "macho"]
+
 [lints.clippy]
 # Style.
 collapsible_else_if = "allow"

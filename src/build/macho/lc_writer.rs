@@ -7,6 +7,20 @@ use crate::macho;
 use crate::Endianness;
 use alloc::vec::Vec;
 
+// Load command structure constants
+/// Size of the load command header (cmd + cmdsize fields)
+#[allow(dead_code)]
+const LC_HEADER_SIZE: u32 = 8;
+
+/// Offset to the path string in LC_RPATH commands
+const RPATH_PATH_OFFSET: u32 = 12;
+
+/// Offset to the path string in LC_LOAD_DYLINKER commands
+const DYLINKER_PATH_OFFSET: u32 = 12;
+
+/// Offset to the name string in LC_ID_DYLIB and LC_LOAD_DYLIB commands
+const DYLIB_NAME_OFFSET: u32 = 24;
+
 /// A writer for building load command sections.
 ///
 /// This struct manages a buffer and handles endianness conversion
@@ -91,7 +105,7 @@ impl LoadCommandWriter {
 
         self.write_u32(macho::LC_LOAD_DYLINKER);
         self.write_u32(cmdsize);
-        self.write_u32(12); // offset to path string (always 12)
+        self.write_u32(DYLINKER_PATH_OFFSET);
         self.write_bytes(path);
         self.buffer.push(0); // null terminator
         self.pad_to_alignment();
@@ -128,7 +142,7 @@ impl LoadCommandWriter {
 
         self.write_u32(macho::LC_RPATH);
         self.write_u32(cmdsize);
-        self.write_u32(12); // offset to path string (always 12)
+        self.write_u32(RPATH_PATH_OFFSET);
         self.write_bytes(path);
         self.buffer.push(0); // null terminator
 
@@ -160,27 +174,29 @@ impl LoadCommandWriter {
         );
     }
 
-    /// Write an LC_ID_DYLIB command with custom size (preserves padding).
+    /// Write an LC_ID_DYLIB command.
     ///
-    /// If the new name doesn't fit in the original cmdsize, the minimum required
-    /// size will be used instead (this happens when the name grows).
+    /// Uses the minimum required size for the command to match install_name_tool behavior.
+    /// Apple's tool always uses the minimum size, even if the original command was larger.
+    ///
+    /// The `original_cmdsize` parameter is kept for API compatibility but not used.
     pub fn write_id_dylib_with_size(
         &mut self,
         name: &[u8],
         timestamp: u32,
         current_version: u32,
         compatibility_version: u32,
-        original_cmdsize: u32,
+        _original_cmdsize: u32,
     ) {
-        let min_size = calc_dylib_size(name);
-        // Use the larger of original size or minimum required size
-        let cmdsize = original_cmdsize.max(min_size);
+        // Always use the minimum size needed to match install_name_tool behavior
+        // Apple's tool shrinks commands when the new name is shorter
+        let cmdsize = calc_dylib_size(name);
 
         let start_pos = self.buffer.len();
 
         self.write_u32(macho::LC_ID_DYLIB);
         self.write_u32(cmdsize);
-        self.write_u32(24); // offset to name string (always 24)
+        self.write_u32(DYLIB_NAME_OFFSET);
         self.write_u32(timestamp);
         self.write_u32(current_version);
         self.write_u32(compatibility_version);
@@ -216,10 +232,10 @@ impl LoadCommandWriter {
         );
     }
 
-    /// Write an LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB command with custom size (preserves padding).
+    /// Write an LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB command.
     ///
-    /// If the new name doesn't fit in the original cmdsize, the minimum required
-    /// size will be used instead (this happens when the name grows).
+    /// Uses the minimum required size for the command to match install_name_tool behavior.
+    /// The `original_cmdsize` parameter is kept for API compatibility but not used.
     pub fn write_load_dylib_with_size(
         &mut self,
         cmd: u32,
@@ -227,17 +243,16 @@ impl LoadCommandWriter {
         timestamp: u32,
         current_version: u32,
         compatibility_version: u32,
-        original_cmdsize: u32,
+        _original_cmdsize: u32,
     ) {
-        let min_size = calc_dylib_size(name);
-        // Use the larger of original size or minimum required size
-        let cmdsize = original_cmdsize.max(min_size);
+        // Always use the minimum size needed to match install_name_tool behavior
+        let cmdsize = calc_dylib_size(name);
 
         let start_pos = self.buffer.len();
 
         self.write_u32(cmd); // Use the provided command type (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, or LC_REEXPORT_DYLIB)
         self.write_u32(cmdsize);
-        self.write_u32(24); // offset to name string (always 24)
+        self.write_u32(DYLIB_NAME_OFFSET);
         self.write_u32(timestamp);
         self.write_u32(current_version);
         self.write_u32(compatibility_version);
@@ -325,7 +340,7 @@ pub fn align_load_command_size(size: usize) -> usize {
 /// - 1 byte: null terminator
 /// - padding to 8-byte alignment
 pub fn calc_dylinker_size(path: &[u8]) -> u32 {
-    let base_size = 12; // cmd + cmdsize + offset
+    let base_size = DYLINKER_PATH_OFFSET as usize; // cmd + cmdsize + offset
     let string_size = path.len() + 1; // +1 for null terminator
     let total = base_size + string_size;
     align_load_command_size(total) as u32
@@ -354,7 +369,7 @@ pub fn calc_main_size() -> u32 {
 /// - 1 byte: null terminator
 /// - padding to 8-byte alignment
 pub fn calc_rpath_size(path: &[u8]) -> u32 {
-    let base_size = 12; // cmd + cmdsize + offset
+    let base_size = RPATH_PATH_OFFSET as usize; // cmd + cmdsize + offset
     let string_size = path.len() + 1; // +1 for null terminator
     let total = base_size + string_size;
     align_load_command_size(total) as u32
@@ -373,7 +388,7 @@ pub fn calc_rpath_size(path: &[u8]) -> u32 {
 /// - 1 byte: null terminator
 /// - padding to 8-byte alignment
 pub fn calc_dylib_size(name: &[u8]) -> u32 {
-    let base_size = 24; // cmd + cmdsize + offset + timestamp + 2 versions
+    let base_size = DYLIB_NAME_OFFSET as usize; // cmd + cmdsize + offset + timestamp + 2 versions
     let string_size = name.len() + 1; // +1 for null terminator
     let total = base_size + string_size;
     align_load_command_size(total) as u32

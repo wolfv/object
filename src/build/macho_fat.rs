@@ -28,6 +28,7 @@ impl<'data> FatBuilder<'data> {
     ///
     /// Returns alignment as power of 2 (e.g., 12 = 4KB, 14 = 16KB).
     /// This matches Apple's typical alignment choices for different architectures.
+    #[allow(dead_code)]
     fn default_alignment_for_cpu(cpu_type: u32) -> u32 {
         match cpu_type {
             // x86 and x86_64 typically use 4KB (2^12) alignment
@@ -114,6 +115,7 @@ impl<'data> FatBuilder<'data> {
     /// Write the fat binary to a buffer.
     ///
     /// This writes all architecture slices and creates a proper fat binary header.
+    #[must_use = "write() produces a buffer that must be used"]
     pub fn write(self) -> crate::build::Result<Vec<u8>> {
         if self.slices.is_empty() {
             return Err(crate::build::Error::new("No slices to write"));
@@ -143,6 +145,16 @@ impl<'data> FatBuilder<'data> {
         for (i, data) in slice_data.iter().enumerate() {
             // Use preserved alignment for each slice
             let align_bits = alignments[i];
+
+            // Validate alignment: Apple's tools typically use up to 14 (16KB)
+            // Enforce a maximum of 31 bits to prevent overflow in shift operation
+            if align_bits > 31 {
+                return Err(crate::build::Error::new(format!(
+                    "Invalid alignment for slice {}: 2^{} is too large (maximum is 2^31)",
+                    i, align_bits
+                )));
+            }
+
             let align_size = 1u64 << align_bits;
 
             // Align to this slice's alignment

@@ -1,4 +1,54 @@
-//! This module provides a [`Builder`] for reading, modifying, and then writing Mach-O files.
+//! # Mach-O Binary Modification
+//!
+//! This module provides in-place modification of Mach-O binaries, similar to
+//! Apple's `install_name_tool`. It can modify load commands (RPATHs, dylib
+//! dependencies, install names) without affecting executable code or data.
+//!
+//! ## Features
+//!
+//! - **In-place modification**: Only rewrites load commands, preserves all segment data
+//! - **Bit-for-bit compatibility**: Achieves identical output to Apple's tools
+//! - **Slack space growth**: Can grow load commands into available slack space
+//! - **Fat binary support**: Works with universal binaries (multiple architectures)
+//!
+//! ## Example
+//!
+//! ```no_run
+//! use object::build::macho::Builder;
+//! use std::fs;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Read an existing Mach-O binary
+//! let data = fs::read("myapp")?;
+//! let mut builder = Builder::read(&*data)?;
+//!
+//! // Modify load commands
+//! builder.add_rpath("@executable_path/../Frameworks");
+//! builder.change_dependency("/old/lib.dylib", "@rpath/new.dylib");
+//!
+//! // Write the modified binary
+//! let modified = builder.write()?;
+//! fs::write("myapp-modified", &modified)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Limitations
+//!
+//! - **Load commands only**: Cannot modify section contents or executable code
+//! - **Slack space required**: Growing load commands requires available slack space
+//!   (like Apple's tool, will error if space is insufficient)
+//! - **Code signatures**: Any modification invalidates code signatures
+//! - **No segment relocation**: Does not relocate segments (matches Apple's design)
+//!
+//! ## Safety Properties
+//!
+//! The `write()` method preserves all segment data byte-for-byte. It only modifies:
+//! - The Mach-O header (`ncmds`, `sizeofcmds` fields)
+//! - The load command section
+//! - Slack space between load commands and first segment (if growing)
+//!
+//! All other data (code, data segments, symbol tables, etc.) remains unchanged.
 
 mod lc_writer;
 pub use lc_writer::*;
@@ -12,7 +62,6 @@ use crate::read::macho::{
     LoadCommandVariant, MachHeader, Section as SectionTrait, Segment as SegmentTrait,
 };
 use crate::read::{FileKind, ReadRef};
-use crate::write;
 use crate::write::{MachODylib, MachOEntryPoint, MachOLoadDylinker, MachORpath};
 use crate::{Architecture, Endianness};
 
@@ -387,6 +436,7 @@ impl<'data> Builder<'data> {
     ///
     /// Modifies the original binary data in-place, preserving all segments and code.
     /// This only works for binaries created from `Builder::read()`.
+    #[must_use = "write() produces a buffer that must be used"]
     pub fn write(self) -> Result<Vec<u8>> {
         // If we have original data, modify it in-place
         if let Some(original) = self.original_data {
@@ -424,8 +474,17 @@ impl<'data> Builder<'data> {
             return Err(Error::new("Binary too small for header"));
         }
 
-        // Extract old sizeofcmds from header
-        // Field is at offset 20 for both 32-bit and 64-bit headers
+        // Extract old ncmds and sizeofcmds from header for validation
+        // ncmds is at offset 16, sizeofcmds at offset 20 (both 32-bit and 64-bit)
+        let old_ncmds = match self.endian {
+            Endianness::Little => {
+                u32::from_le_bytes([original[16], original[17], original[18], original[19]])
+            }
+            Endianness::Big => {
+                u32::from_be_bytes([original[16], original[17], original[18], original[19]])
+            }
+        };
+
         let old_sizeofcmds = match self.endian {
             Endianness::Little => {
                 u32::from_le_bytes([original[20], original[21], original[22], original[23]])
@@ -434,6 +493,24 @@ impl<'data> Builder<'data> {
                 u32::from_be_bytes([original[20], original[21], original[22], original[23]])
             }
         };
+
+        // Validate header: load commands must fit within the binary
+        let load_commands_end = header_size as u64 + old_sizeofcmds as u64;
+        if load_commands_end > original.len() as u64 {
+            return Err(Error::new(format!(
+                "Corrupted Mach-O header: load commands (size {}) extend beyond file (size {})",
+                load_commands_end,
+                original.len()
+            )));
+        }
+
+        // Sanity check: reasonable number of commands (Apple's tools support up to ~100 typically)
+        if old_ncmds > 1000 {
+            return Err(Error::new(format!(
+                "Suspicious number of load commands: {} (possible corruption)",
+                old_ncmds
+            )));
+        }
 
         // Build new load commands using LoadCommandWriter
         let (new_load_commands, new_ncmds) = self.build_load_commands();
@@ -447,10 +524,16 @@ impl<'data> Builder<'data> {
             // Case 2: Need to use slack space before first segment
             let new_lc_end = header_size as u64 + new_sizeofcmds as u64;
 
+            // Validate that first_segment_data_offset was initialized
+            if self.first_segment_data_offset == 0 {
+                return Err(Error::new(
+                    "Binary has no segments with data - cannot determine slack space boundary"
+                ));
+            }
+
             if new_lc_end > self.first_segment_data_offset {
-                let available_space = self
-                    .first_segment_data_offset
-                    .saturating_sub(header_size as u64);
+                // Calculate available space (we know first_segment_data_offset > 0 from check above)
+                let available_space = self.first_segment_data_offset - header_size as u64;
                 return Err(Error::new(format!(
                     "Changing install names or rpaths can't be redone because larger updated load commands \
                      do not fit (need {} bytes, have {} bytes available). \
@@ -475,6 +558,13 @@ impl<'data> Builder<'data> {
         if lc_end > output.len() {
             return Err(Error::new("New load commands extend beyond file"));
         }
+
+        // Verify that the buffer size matches what we're about to copy
+        debug_assert_eq!(
+            new_load_commands.len(),
+            lc_end - lc_start,
+            "Load command buffer size mismatch"
+        );
 
         // Copy new load commands
         output[lc_start..lc_end].copy_from_slice(&new_load_commands);
@@ -556,7 +646,17 @@ impl<'data> Builder<'data> {
     }
 
     /// Add an RPATH to the file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the path is empty or exceeds 1024 bytes (a reasonable limit for paths).
     pub fn add_rpath(&mut self, path: &str) {
+        assert!(!path.is_empty(), "RPATH cannot be empty");
+        assert!(
+            path.len() <= 1024,
+            "RPATH too long ({} bytes, maximum is 1024)",
+            path.len()
+        );
         self.load_commands.add_rpath(path.as_bytes().to_vec());
     }
 
@@ -595,13 +695,41 @@ impl<'data> Builder<'data> {
         })
     }
 
+    /// Check if the binary has a load dylinker command.
+    pub fn has_load_dylinker(&self) -> bool {
+        self.load_commands.commands.iter().any(|cmd| {
+            matches!(cmd, LoadCommand::Raw { cmd: macho::LC_LOAD_DYLINKER, .. })
+        })
+    }
+
+    /// Check if the binary has an entry point (LC_MAIN or LC_UNIXTHREAD).
+    pub fn has_entry_point(&self) -> bool {
+        self.load_commands.commands.iter().any(|cmd| {
+            matches!(
+                cmd,
+                LoadCommand::Raw { cmd: macho::LC_MAIN, .. }
+                    | LoadCommand::Raw { cmd: macho::LC_UNIXTHREAD, .. }
+            )
+        })
+    }
+
     /// Set the install name for a dylib.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the name is empty or exceeds 1024 bytes.
     pub fn set_install_name(
         &mut self,
         name: &str,
         current_version: u32,
         compatibility_version: u32,
     ) {
+        assert!(!name.is_empty(), "Dylib install name cannot be empty");
+        assert!(
+            name.len() <= 1024,
+            "Dylib install name too long ({} bytes, maximum is 1024)",
+            name.len()
+        );
         self.load_commands.set_id_dylib(MachODylib {
             name: name.as_bytes().to_vec(),
             timestamp: 2, // Standard timestamp value
@@ -649,7 +777,17 @@ impl<'data> Builder<'data> {
     }
 
     /// Add a library dependency.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the name is empty or exceeds 1024 bytes.
     pub fn add_dependency(&mut self, name: &str) {
+        assert!(!name.is_empty(), "Dylib dependency name cannot be empty");
+        assert!(
+            name.len() <= 1024,
+            "Dylib dependency name too long ({} bytes, maximum is 1024)",
+            name.len()
+        );
         self.load_commands
             .add_load_dylib(MachODylib::from_str(name));
     }
@@ -954,6 +1092,16 @@ impl<'data> Item for Segment<'data> {
 }
 
 /// A section in a Mach-O segment.
+///
+/// # Limitations
+///
+/// Currently, section data is **not** preserved during read operations.
+/// The `data` field will always be empty when reading existing binaries.
+/// This is because the `Builder` is designed for in-place modification of
+/// load commands only, not for modifying section contents.
+///
+/// If you need to modify section data, use the `write::Object` API to create
+/// new binaries from scratch.
 #[derive(Debug)]
 pub struct Section<'data> {
     /// The section name.
@@ -975,5 +1123,9 @@ pub struct Section<'data> {
     /// The section flags.
     pub flags: u32,
     /// The section data.
+    ///
+    /// **Note**: This field is always empty when reading existing binaries.
+    /// Section data is preserved in the original binary during in-place modification,
+    /// but is not accessible through this API.
     pub data: Bytes<'data>,
 }

@@ -33,9 +33,9 @@ fn builder_round_trip_executable() {
     assert_eq!(builder.architecture, Architecture::X86_64);
 
     // Verify load commands
-    assert!(builder.load_commands.load_dylinker.is_some());
-    assert!(builder.load_commands.entry_point.is_some());
-    assert_eq!(builder.load_commands.rpaths.len(), 2);
+    assert!(builder.has_load_dylinker());
+    assert!(builder.has_entry_point());
+    assert_eq!(builder.rpaths().count(), 2);
 
     // Verify RPATHs
     let rpaths: Vec<_> = builder.rpaths().collect();
@@ -309,6 +309,6 @@ fn builder_read_object_file() {
     assert_eq!(builder.architecture, Architecture::X86_64);
 
     // Object files shouldn't have these load commands
-    assert!(builder.load_commands.load_dylinker.is_none());
-    assert!(builder.load_commands.entry_point.is_none());
+    assert!(!builder.has_load_dylinker());
+    assert!(!builder.has_entry_point());
 }

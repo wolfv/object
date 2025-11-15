@@ -29,8 +29,7 @@ fn real_world_read_x86_64_executable() {
 
     // Check that it has an entry point
     assert!(
-        builder.load_commands.entry_point.is_some()
-            || builder.load_commands.load_dylinker.is_some(),
+        builder.has_entry_point() || builder.has_load_dylinker(),
         "Executable should have entry point or dylinker"
     );
 }
@@ -133,8 +132,7 @@ fn real_world_read_go_executable() {
             assert_eq!(builder.architecture, Architecture::X86_64);
 
             // Go binaries typically have multiple load commands
-            let has_load_cmds = builder.load_commands.entry_point.is_some()
-                || builder.load_commands.load_dylinker.is_some()
+            let has_load_cmds = builder.has_entry_point() || builder.has_load_dylinker()
                 || !builder.segments.is_empty();
 
             assert!(
@@ -163,11 +161,11 @@ fn real_world_read_object_file() {
 
     // Object files shouldn't have entry points or dylinker
     assert!(
-        builder.load_commands.entry_point.is_none(),
+        !builder.has_entry_point(),
         "Object files shouldn't have entry points"
     );
     assert!(
-        builder.load_commands.load_dylinker.is_none(),
+        !builder.has_load_dylinker(),
         "Object files shouldn't have dylinker"
     );
 }
